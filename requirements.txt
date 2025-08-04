@@ -1,0 +1,7 @@
+ollama
+requests
+pyttsx3
+pyaudio
+numpy
+vosk
+pyaudio
