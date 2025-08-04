@@ -5,3 +5,5 @@ pyaudio
 numpy
 vosk
 pyaudio
+PyMuPDF
+python-docx
