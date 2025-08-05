@@ -870,10 +870,10 @@ class InteractiveTextApp:
                 # 提取问题部分（">"之后的内容）
                 question_text = self.extract_question(model_output)
                 
-                # 显示问题
+                # 显示问题 - 只显示">"之后的内容
                 self.message_queue.put(f"> {question_text}")
                 
-                # 语音播报问题
+                # 语音播报问题 - 只播报">"之后的内容
                 self.solution.use_pyttsx3(question_text)
                 
                 # 更新状态
