@@ -18,6 +18,174 @@ import docx  # For DOCX parsing
 import re
 
 
+# 评分系统和动态难度调整模块
+class ScoreAndDifficultyManager:
+    """评分系统和动态难度调整管理器"""
+    def __init__(self):
+        self.current_difficulty = "中等"  # 初始难度为中等
+        self.score_history = []  # 历史评分记录
+        self.difficulty_history = []  # 难度调整历史
+        self.question_count = 0  # 问题计数
+        
+        # 难度级别定义
+        self.difficulty_levels = {
+            "简单": {
+                "level": 1,
+                "keywords": ["基础", "简单", "基本", "介绍"],
+                "description": "基础概念和简单问题"
+            },
+            "中等": {
+                "level": 2,
+                "keywords": ["实际", "应用", "经验", "项目"],
+                "description": "实际应用和项目经验"
+            },
+            "困难": {
+                "level": 3,
+                "keywords": ["深入", "复杂", "高级", "架构", "优化"],
+                "description": "深度技术和复杂场景"
+            }
+        }
+    
+    def evaluate_response(self, user_response, question_context=""):
+        """
+        使用AI模型对用户回答进行评分
+        返回0-1之间的分数
+        """
+        try:
+            # 构建评分提示
+            scoring_prompt = f"""
+你是一个专业的面试评分专家。请对以下候选人的回答进行客观评分。
+
+评分标准（0-1分）：
+- 0.0-0.3: 回答不完整、不准确或偏离主题
+- 0.4-0.6: 回答基本正确但缺乏深度或细节
+- 0.7-0.8: 回答准确、有深度，展现了良好的理解
+- 0.9-1.0: 回答非常优秀，展现了深刻的理解和丰富的经验
+
+面试问题上下文: {question_context}
+候选人回答: {user_response}
+
+请只返回一个0到1之间的数字作为评分，不要包含任何其他文字。
+"""
+            
+            # 调用模型进行评分
+            response = ollama.chat(
+                model="Jerrypoi/deepseek-r1-with-tool-calls:latest",
+                messages=[{"role": "user", "content": scoring_prompt}]
+            )
+            
+            score_text = response['message']['content'].strip()
+            
+            # 提取数字分数
+            import re
+            score_match = re.search(r'(\d*\.?\d+)', score_text)
+            if score_match:
+                score = float(score_match.group(1))
+                # 确保分数在0-1范围内
+                score = max(0.0, min(1.0, score))
+            else:
+                # 如果无法解析，默认给中等分数
+                score = 0.5
+            
+            # 记录评分历史
+            self.score_history.append(score)
+            self.question_count += 1
+            
+            return score
+            
+        except Exception as e:
+            print(f"评分过程出错: {e}")
+            # 出错时返回中等分数
+            return 0.5
+    
+    def adjust_difficulty(self, score):
+        """
+        根据评分调整问题难度
+        """
+        previous_difficulty = self.current_difficulty
+        
+        # 根据评分调整难度
+        if score > 0.8:
+            # 表现优秀，增加难度
+            if self.current_difficulty == "简单":
+                self.current_difficulty = "中等"
+            elif self.current_difficulty == "中等":
+                self.current_difficulty = "困难"
+            # 已经是困难级别，保持不变
+        elif score < 0.4:
+            # 表现较差，降低难度
+            if self.current_difficulty == "困难":
+                self.current_difficulty = "中等"
+            elif self.current_difficulty == "中等":
+                self.current_difficulty = "简单"
+            # 已经是简单级别，保持不变
+        # 0.4 <= score <= 0.8，保持当前难度
+        
+        # 记录难度调整历史
+        self.difficulty_history.append({
+            "question_num": self.question_count,
+            "score": score,
+            "previous_difficulty": previous_difficulty,
+            "new_difficulty": self.current_difficulty
+        })
+        
+        return self.current_difficulty
+    
+    def get_difficulty_prompt(self):
+        """
+        获取当前难度对应的提示语
+        """
+        current_level = self.difficulty_levels[self.current_difficulty]
+        
+        prompt = f"""
+当前问题难度级别: {self.current_difficulty} (级别 {current_level['level']})
+难度描述: {current_level['description']}
+建议关键词: {', '.join(current_level['keywords'])}
+
+请根据此难度级别生成相应的面试问题。
+
+难度级别说明：
+- 简单：基础概念、基本技能、入门级问题
+- 中等：实际应用、项目经验、中级技术问题
+- 困难：深度技术、复杂场景、高级架构问题
+"""
+        return prompt
+    
+    def get_score_summary(self):
+        """
+        获取评分摘要
+        """
+        if not self.score_history:
+            return "暂无评分记录"
+        
+        avg_score = sum(self.score_history) / len(self.score_history)
+        max_score = max(self.score_history)
+        min_score = min(self.score_history)
+        
+        summary = f"""
+评分摘要：
+- 总问题数: {len(self.score_history)}
+- 平均分: {avg_score:.2f}
+- 最高分: {max_score:.2f}
+- 最低分: {min_score:.2f}
+- 当前难度: {self.current_difficulty}
+"""
+        return summary
+    
+    def get_difficulty_progression(self):
+        """
+        获取难度变化轨迹
+        """
+        if not self.difficulty_history:
+            return "暂无难度调整记录"
+        
+        progression = "难度调整轨迹：\n"
+        for record in self.difficulty_history:
+            progression += f"问题{record['question_num']}: 得分{record['score']:.2f} -> {record['previous_difficulty']} → {record['new_difficulty']}\n"
+        
+        return progression
+
+
 
 class DynamicPromptAdjuster:
     """动态提示调整模块，包含Triplet Filter和Demo Selector"""
@@ -385,7 +553,9 @@ class InteractiveTextApp:
         self.root.geometry("1000x700")
         self.root.configure(bg="#f0f0f0")
         self.dynamic_prompt_adjuster = None  # 动态提示调整器
-        self.conversation_context = []  # 对话上下文        
+        self.conversation_context = []  # 对话上下文
+        self.score_manager = ScoreAndDifficultyManager()  # 评分和难度管理器
+        self.last_question = ""  # 保存最后一个问题用于评分        
         # 创建主框架
         main_frame = tk.Frame(root, bg="#f0f0f0")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -473,6 +643,64 @@ class InteractiveTextApp:
             wraplength=900
         )
         self.info_label.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 添加评分和难度状态面板
+        score_frame = tk.LabelFrame(
+            main_frame,
+            text="面试状态",
+            font=self.small_font,
+            bg="#f0f0f0",
+            bd=2,
+            relief=tk.GROOVE
+        )
+        score_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 创建两列布局
+        left_score_frame = tk.Frame(score_frame, bg="#f0f0f0")
+        left_score_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        right_score_frame = tk.Frame(score_frame, bg="#f0f0f0")
+        right_score_frame.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=5)
+        
+        # 当前难度显示
+        self.difficulty_label = tk.Label(
+            left_score_frame,
+            text="当前难度: 中等",
+            font=("Helvetica", 12, "bold"),
+            bg="#f0f0f0",
+            fg="#3498db"
+        )
+        self.difficulty_label.pack(anchor=tk.W, pady=2)
+        
+        # 最新评分显示
+        self.latest_score_label = tk.Label(
+            left_score_frame,
+            text="最新评分: --",
+            font=self.small_font,
+            bg="#f0f0f0",
+            fg="#2ecc71"
+        )
+        self.latest_score_label.pack(anchor=tk.W, pady=2)
+        
+        # 平均分显示
+        self.avg_score_label = tk.Label(
+            right_score_frame,
+            text="平均分: --",
+            font=self.small_font,
+            bg="#f0f0f0",
+            fg="#f39c12"
+        )
+        self.avg_score_label.pack(anchor=tk.W, pady=2)
+        
+        # 问题计数显示
+        self.question_count_label = tk.Label(
+            right_score_frame,
+            text="问题数: 0",
+            font=self.small_font,
+            bg="#f0f0f0",
+            fg="#9b59b6"
+        )
+        self.question_count_label.pack(anchor=tk.W, pady=2)
 
         # 创建可滚动的文本框
         text_frame = tk.Frame(main_frame, bg="#ffffff", bd=2, relief=tk.GROOVE)
@@ -641,7 +869,13 @@ class InteractiveTextApp:
         self.interview_active = True
         self.question_count = 0  # 重置问题计数器
         self.first_question_asked = False  # 重置第一问题标记
+        
+        # 重置评分和难度管理器
+        self.score_manager = ScoreAndDifficultyManager()
+        self.update_status_display()
+        
         self.display_text("面试已开始！请准备回答面试官的问题。")
+        self.display_text(f"初始难度: {self.score_manager.current_difficulty}")
         self.end_interview_btn.config(state=tk.NORMAL)
         self.start_interview_btn.config(state=tk.DISABLED)
         
@@ -656,10 +890,22 @@ class InteractiveTextApp:
         """结束面试"""
         self.interview_active = False
         self.display_text("面试已结束！感谢参与。")
+        
+        # 显示评分总结
+        score_summary = self.score_manager.get_score_summary()
+        difficulty_progression = self.score_manager.get_difficulty_progression()
+        
+        self.display_text("\n" + "="*50)
+        self.display_text("📊 面试评分总结")
+        self.display_text("="*50)
+        self.display_text(score_summary)
+        self.display_text(difficulty_progression)
+        self.display_text("="*50)
+        
         self.end_interview_btn.config(state=tk.DISABLED)
         self.start_interview_btn.config(state=tk.NORMAL)
         
-        # 发送评估请求
+        # 发送评估请求（包含评分信息）
         self.input_queue.put("end_interview")
 
     def start_recording(self, event):
@@ -712,9 +958,9 @@ class InteractiveTextApp:
         self.root.after(100, self.reset_progress)
 
     def analyze_response(self, response):
-        """分析候选人回答，更新对话上下文"""
+        """分析候选人回答，更新对话上下文，评分并调整难度"""
         # 更新动态提示调整器
-        if self.dynamic_prompt_adjuster and self.last_model_output:
+        if self.dynamic_prompt_adjuster and hasattr(self, 'last_model_output'):
             self.dynamic_prompt_adjuster.update_conversation_context(
                 response, self.last_model_output
             )
@@ -725,6 +971,69 @@ class InteractiveTextApp:
         # 限制上下文长度
         if len(self.conversation_context) > 6:
             self.conversation_context = self.conversation_context[-6:]
+        
+        # 使用评分系统对回答进行评分
+        if hasattr(self, 'last_question') and self.last_question:
+            self.display_text("正在评分中...")
+            
+            # 在后台线程中进行评分以避免阻塞UI
+            def score_response():
+                try:
+                    score = self.score_manager.evaluate_response(response, self.last_question)
+                    
+                    # 根据评分调整难度
+                    new_difficulty = self.score_manager.adjust_difficulty(score)
+                    
+                    # 在主线程中更新UI
+                    self.root.after(0, lambda: self._update_after_scoring(score, new_difficulty))
+                
+                except Exception as e:
+                    print(f"评分过程出错: {e}")
+                    self.root.after(0, lambda: self.display_text("评分过程出错，继续面试..."))
+            
+            threading.Thread(target=score_response, daemon=True).start()
+    
+    def _update_after_scoring(self, score, new_difficulty):
+        """评分完成后更新UI和状态"""
+        # 显示评分结果
+        score_text = f"本题评分: {score:.2f}"
+        if score > 0.8:
+            score_text += " (优秀)"
+        elif score > 0.6:
+            score_text += " (良好)"
+        elif score > 0.4:
+            score_text += " (及格)"
+        else:
+            score_text += " (需改进)"
+        
+        self.display_text(score_text)
+        
+        # 如果难度发生变化，显示难度调整信息
+        if new_difficulty != self.score_manager.difficulty_history[-1]["previous_difficulty"]:
+            self.display_text(f"难度调整: {self.score_manager.difficulty_history[-1]['previous_difficulty']} → {new_difficulty}")
+        
+        # 更新状态显示
+        self.update_status_display()
+    
+    def update_status_display(self):
+        """更新面试状态显示面板"""
+        # 更新当前难度
+        self.difficulty_label.config(text=f"当前难度: {self.score_manager.current_difficulty}")
+        
+        # 更新最新评分
+        if self.score_manager.score_history:
+            latest_score = self.score_manager.score_history[-1]
+            self.latest_score_label.config(text=f"最新评分: {latest_score:.2f}")
+            
+            # 更新平均分
+            avg_score = sum(self.score_manager.score_history) / len(self.score_manager.score_history)
+            self.avg_score_label.config(text=f"平均分: {avg_score:.2f}")
+        else:
+            self.latest_score_label.config(text="最新评分: --")
+            self.avg_score_label.config(text="平均分: --")
+        
+        # 更新问题计数
+        self.question_count_label.config(text=f"问题数: {len(self.score_manager.score_history)}")
 
     def reset_progress(self):
         self.progress_var.set(0)
@@ -749,18 +1058,23 @@ class InteractiveTextApp:
             return model_output
 
     def build_dynamic_prompt(self):
-        """根据论文结构构建动态提示 [I; H; K; E]"""
-        # I: 任务指令
+        """根据论文结构构建动态提示 [I; H; K; E]，集成难度调整"""
+        # 获取难度相关提示
+        difficulty_prompt = self.score_manager.get_difficulty_prompt()
+        
+        # I: 任务指令（集成难度调整）
         instruction = (
-            "你是一个专业的AI面试官。基于候选人的简历信息和对话历史，提出相关的问题来评估候选人的技能和经验。"
-            "面试问题应聚焦于候选人的工作经验、项目经历、技能掌握程度等专业领域。"
+            "你是一个专业的AI面试官，具备动态难度调整能力。基于候选人的简历信息、对话历史和当前难度要求，提出相关的问题来评估候选人的技能和经验。"
+            "面试问题应聚焦于候选人的工作经验、项目经历、技能掌握程度等专业领域。\n\n"
+            f"{difficulty_prompt}\n\n"
             "你必须严格遵守以下规则：\n"
             "1. 在输出问题时，先进行思考（使用<think>标签包裹思考过程），然后输出问题（使用</think>标签结束思考）\n"
             "2. 在问题前添加'>'符号作为前缀\n"
             "3. 只输出问题内容，不要添加任何前缀（如'面试官：'）\n"
             "4. 每次只提一个问题\n"
             "5. 问题应该简洁明了，不超过2句话\n"
-            "6. 面试结束时给出全面评估\n"
+            "6. 问题难度必须与当前设定的难度级别匹配\n"
+            "7. 面试结束时给出全面评估，包括评分总结\n"
         )
         
         # H: 历史细节
@@ -841,10 +1155,26 @@ class InteractiveTextApp:
                     self.question_count = 0
                     self.first_question_asked = False
                 elif action == "end_interview":
-                    # 添加评估请求
+                    # 添加评估请求（包含评分信息）
+                    score_info = self.score_manager.get_score_summary()
+                    difficulty_info = self.score_manager.get_difficulty_progression()
+                    
+                    evaluation_content = f"""面试结束，请根据整个面试过程给出候选人综合评估。
+
+评分数据参考：
+{score_info}
+
+{difficulty_info}
+
+请提供：
+1. 综合技能评价
+2. 优势和不足
+3. 建议改进方向
+4. 最终面试结论"""
+
                     self.conversation_history.append({
                         "role": "user", 
-                        "content": "面试结束，请根据整个面试过程给出候选人评估"
+                        "content": evaluation_content
                     })
                 elif action == "candidate_response":
                     # 候选人的回答已经在对话历史中，不需要额外处理
@@ -869,6 +1199,9 @@ class InteractiveTextApp:
                 
                 # 提取问题部分（">"之后的内容）
                 question_text = self.extract_question(model_output)
+                
+                # 保存最后一个问题用于评分
+                self.last_question = question_text
                 
                 # 显示问题 - 只显示">"之后的内容
                 self.message_queue.put(f"> {question_text}")
