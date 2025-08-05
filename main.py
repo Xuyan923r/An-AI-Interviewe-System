@@ -183,6 +183,7 @@ class ResumeParser:
         return self.resume_data
 
 # Tkinter 窗口模块
+# Tkinter 窗口模块
 class InteractiveTextApp:
     def __init__(self, root, solution):
         self.root = root
@@ -372,6 +373,12 @@ class InteractiveTextApp:
         self.interview_active = False
         self.resume_data = None
         self.parser = ResumeParser()
+        
+        # 对话历史
+        self.conversation_history = []
+        self.initial_prompt_set = False
+        self.question_count = 0  # 问题计数器
+        self.first_question_asked = False  # 标记是否已问过第一个问题
 
     def upload_resume(self):
         """上传并解析简历"""
@@ -405,12 +412,18 @@ class InteractiveTextApp:
             return
         
         self.interview_active = True
+        self.question_count = 0  # 重置问题计数器
+        self.first_question_asked = False  # 重置第一问题标记
         self.display_text("面试已开始！请准备回答面试官的问题。")
         self.end_interview_btn.config(state=tk.NORMAL)
         self.start_interview_btn.config(state=tk.DISABLED)
         
-        # 发送初始面试问题
-        self.input_queue.put("现在开始面试。请基于以下简历内容提出问题：" + json.dumps(self.resume_data, ensure_ascii=False))
+        # 重置对话历史
+        self.conversation_history = []
+        self.initial_prompt_set = False
+        
+        # 发送初始面试问题请求
+        self.input_queue.put("start_interview")
 
     def end_interview(self):
         """结束面试"""
@@ -420,7 +433,7 @@ class InteractiveTextApp:
         self.start_interview_btn.config(state=tk.NORMAL)
         
         # 发送评估请求
-        self.input_queue.put("面试结束，请根据整个面试过程给出候选人评估")
+        self.input_queue.put("end_interview")
 
     def start_recording(self, event):
         """开始录音"""
@@ -459,7 +472,12 @@ class InteractiveTextApp:
         
         if user_input:
             self.message_queue.put(f"候选人: {user_input}")
-            self.input_queue.put(user_input)
+            
+            # 将候选人的回答添加到对话历史
+            self.conversation_history.append({"role": "user", "content": user_input})
+            
+            # 发送处理请求
+            self.input_queue.put("candidate_response")
         
         self.root.after(100, self.reset_progress)
 
@@ -467,40 +485,139 @@ class InteractiveTextApp:
         self.progress_var.set(0)
         self.time_label.config(text="0.0s")
 
+    def extract_question(self, model_output):
+        """从模型输出中提取">"之后的问题部分"""
+        # 寻找 ">" 符号
+        arrow_index = model_output.find(">")
+        
+        if arrow_index != -1:
+            # 提取 ">" 之后的内容
+            question_text = model_output[arrow_index + 1:].strip()
+            return question_text
+        else:
+            # 如果没有找到 ">"，尝试找到最后一个问号之后的内容
+            last_question = model_output.rfind("?")
+            if last_question != -1:
+                return model_output[last_question + 1:].strip()
+            
+            # 如果还是没有找到，返回整个输出
+            return model_output
+
     def process_model_responses(self):
         """处理模型响应的线程"""
         while True:
-            user_input = self.input_queue.get()
+            action = self.input_queue.get()
             
-            if not self.interview_active and not user_input.startswith("现在开始面试"):
+            if not self.interview_active and action != "start_interview":
                 continue
             
             try:
-                # 准备系统提示词
-                system_prompt = (
-                    "你是一个专业的AI面试官。基于候选人的简历信息，提出相关的问题来评估候选人的技能和经验。"
-                    "面试问题应聚焦于候选人的工作经验、项目经历、技能掌握程度等专业领域。"
-                    "面试结束后，请提供对候选人的全面评估。"
-                    "以下是候选人的简历信息：\n" + 
-                    (json.dumps(self.resume_data, ensure_ascii=False) if self.resume_data else "无简历信息")
-                )
+                # 设置初始系统提示
+                if not self.initial_prompt_set:
+                    # 第一轮提示：基于简历提问
+                    system_prompt = (
+                        "你是一个专业的AI面试官。基于候选人的简历信息，提出相关的问题来评估候选人的技能和经验。"
+                        "面试问题应聚焦于候选人的工作经验、项目经历、技能掌握程度等专业领域。"
+                        "你必须严格遵守以下规则："
+                        "1. 在输出问题时，先进行思考（使用<think>标签包裹思考过程），然后输出问题（使用</think>标签结束思考）"
+                        "2. 在问题前添加'>'符号作为前缀"
+                        "3. 只输出问题内容，不要添加任何前缀（如'面试官：'）"
+                        "4. 每次只提一个问题"
+                        "5. 问题应该简洁明了，不超过2句话"
+                        "6. 面试结束时给出全面评估"
+                        "7. 思考过程放在<think>标签内，不会显示给候选人"
+                        "8. 问题放在</think>标签之后，并在问题前加上'>'符号"
+                        "以下是候选人的简历信息：\n" + 
+                        (json.dumps(self.resume_data, ensure_ascii=False) if self.resume_data else "无简历信息")
+                    )
+                    
+                    # 初始化对话历史
+                    self.conversation_history = [
+                        {"role": "system", "content": system_prompt}
+                    ]
+                    self.initial_prompt_set = True
+                
+                # 处理不同操作
+                if action == "start_interview":
+                    # 添加第一个问题请求
+                    self.conversation_history.append({
+                        "role": "user", 
+                        "content": "请基于候选人的简历提出第一个面试问题"
+                    })
+                    self.question_count = 0
+                    self.first_question_asked = False
+                elif action == "end_interview":
+                    # 添加评估请求
+                    self.conversation_history.append({
+                        "role": "user", 
+                        "content": "面试结束，请根据整个面试过程给出候选人评估"
+                    })
+                elif action == "candidate_response":
+                    # 候选人的回答已经在对话历史中，不需要额外处理
+                    pass
                 
                 # 调用模型生成回复
                 output = ollama.chat(
                     model="Jerrypoi/deepseek-r1-with-tool-calls:latest",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_input}
-                    ]
+                    messages=self.conversation_history
                 )
                 model_output = output['message']['content']
-                self.message_queue.put(f"面试官: {model_output}")
                 
-                # 语音播报模型输出
-                self.solution.use_pyttsx3(model_output)
+                # 将模型的完整回复添加到对话历史
+                self.conversation_history.append({"role": "assistant", "content": model_output})
+                
+                # 如果是结束面试的评估，直接显示整个内容
+                if action == "end_interview":
+                    self.message_queue.put(f"面试评估: {model_output}")
+                    self.solution.use_pyttsx3("面试评估已完成")
+                    continue
+                
+                # 提取问题部分（">"之后的内容）
+                question_text = self.extract_question(model_output)
+                
+                # 显示问题
+                self.message_queue.put(f"> {question_text}")
+                
+                # 语音播报问题
+                self.solution.use_pyttsx3(question_text)
                 
                 # 更新状态
                 self.status_label.config(text="回答中...", fg="#9b59b6")
+                
+                # 增加问题计数
+                self.question_count += 1
+                
+                # 如果是第一次提问后，更新系统提示为基于回答的追问
+                if not self.first_question_asked and self.question_count >= 1:
+                    self.first_question_asked = True
+                    
+                    # 更新系统提示为基于回答的追问模式
+                    follow_up_prompt = (
+                        "你是一个专业的AI面试官。现在面试进入深入追问阶段。"
+                        "你必须基于候选人的回答进行深入追问，确保问题与候选人的回答强相关。"
+                        "你必须严格遵守以下规则："
+                        "1. 在输出问题时，先进行思考（使用<think>标签包裹思考过程），然后输出问题（使用</think>标签结束思考）"
+                        "2. 在问题前添加'>'符号作为前缀"
+                        "3. 只输出问题内容，不要添加任何前缀（如'面试官：'）"
+                        "4. 每次只提一个问题"
+                        "5. 问题应该简洁明了，不超过2句话"
+                        "6. 基于候选人的回答进行深入追问，确保问题与候选人的回答强相关"
+                        "7. 思考过程放在<think>标签内，不会显示给候选人"
+                        "8. 问题放在</think>标签之后，并在问题前加上'>'符号"
+                        "9. 如果候选人的回答不完整或模糊，请要求澄清或提供更多细节"
+                        "10. 如果候选人的回答显示出特定技能或经验，请深入探讨这些领域"
+                    )
+                    
+                    # 更新系统提示
+                    self.conversation_history[0] = {"role": "system", "content": follow_up_prompt}
+                    
+                    # 添加一条指令，指导模型基于回答提问
+                    self.conversation_history.append({
+                        "role": "user", 
+                        "content": "请基于候选人的上一个回答提出深入的问题"
+                    })
+                    
+                    self.display_text("面试进入深入追问阶段...")
                 
             except Exception as e:
                 error_msg = f"错误: {str(e)}"
@@ -534,10 +651,10 @@ class InteractiveTextApp:
         if text.startswith("候选人:"):
             self.text_area.tag_configure("candidate", foreground="#2980b9", font=("Helvetica", 14, "bold"))
             self.text_area.insert(tk.END, text + "\n\n", "candidate")
-        elif text.startswith("面试官:"):
+        elif text.startswith(">"):
             self.text_area.tag_configure("interviewer", foreground="#27ae60", font=("Helvetica", 14))
             self.text_area.insert(tk.END, text + "\n\n", "interviewer")
-        elif text.startswith("错误:"):
+        elif text.startswith("错误:") or text.startswith("面试评估:"):
             self.text_area.tag_configure("error", foreground="#e74c3c", font=("Helvetica", 14))
             self.text_area.insert(tk.END, text + "\n", "error")
         else:
@@ -545,7 +662,6 @@ class InteractiveTextApp:
         
         self.text_area.config(state='disabled')
         self.text_area.yview(tk.END)
-
 # 主逻辑模块
 class Solution:
     def __init__(self):
