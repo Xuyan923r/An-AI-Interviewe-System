@@ -6,7 +6,7 @@ import pyaudio
 import numpy as np
 from vosk import Model, KaldiRecognizer, SetLogLevel
 import tkinter as tk
-from tkinter import scrolledtext, font, ttk, filedialog
+from tkinter import scrolledtext, font, ttk, filedialog, messagebox
 import threading
 import queue
 import wave
@@ -25,6 +25,24 @@ from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from datetime import datetime
+import sys
+
+# 设置UTF-8编码支持
+if sys.platform.startswith('win'):
+    import locale
+    try:
+        locale.setlocale(locale.LC_ALL, 'zh_CN.UTF-8')
+    except:
+        try:
+            locale.setlocale(locale.LC_ALL, 'Chinese_China.936')
+        except:
+            pass
+
+# 确保标准输出使用UTF-8编码
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
 
 
 # JD职位描述解析模块
@@ -267,13 +285,13 @@ class ThreeStageInterviewManager:
         
         avg_recent = sum(recent_scores[-2:]) / len(recent_scores[-2:])
         
-        # 根据表现调整后续阶段问题数量
-        if avg_recent > 0.8:
+        # 根据表现调整后续阶段问题数量（适应新的评分体系）
+        if avg_recent >= 0.75:
             # 表现优秀，可以适当增加技术问题数量
             if self.current_stage < 2:
                 self.questions_per_stage[2] = min(5, self.questions_per_stage[2] + 1)
-        elif avg_recent < 0.4:
-            # 表现较差，适当减少技术问题，增加基础问题
+        elif avg_recent < 0.5:
+            # 表现需要改善，适当减少技术问题，增加基础问题
             if self.current_stage < 2:
                 self.questions_per_stage[2] = max(2, self.questions_per_stage[2] - 1)
                 self.questions_per_stage[1] = min(4, self.questions_per_stage[1] + 1)
@@ -367,27 +385,33 @@ class InterviewReviewManager:
                 stage_scores[stage] = []
             stage_scores[stage].append(record["score"])
         
-        # 确定优势和不足
+        # 确定优势和不足（适应新的评分体系）
         for stage, scores in stage_scores.items():
             avg_score = sum(scores) / len(scores)
             if avg_score >= 0.7:
                 self.overall_assessment["strengths"].append(f"{stage}表现优秀")
-            elif avg_score < 0.5:
+            elif avg_score < 0.55:
                 self.overall_assessment["weaknesses"].append(f"{stage}需要加强")
         
-        # 生成改进建议
+        # 生成改进建议（适应新的评分体系）
         overall_score = self.overall_assessment["overall_score"]
-        if overall_score < 0.6:
+        if overall_score < 0.55:
             self.overall_assessment["improvement_suggestions"].extend([
                 "建议加强基础技术知识的学习",
                 "多做项目实践，积累实际经验",
                 "提高技术表达和沟通能力"
             ])
-        elif overall_score < 0.8:
+        elif overall_score < 0.75:
             self.overall_assessment["improvement_suggestions"].extend([
                 "继续深化技术理解",
                 "关注行业前沿技术发展",
                 "提升系统设计和架构能力"
+            ])
+        else:
+            self.overall_assessment["improvement_suggestions"].extend([
+                "表现优秀，继续保持",
+                "可以尝试挑战更高难度的技术领域",
+                "分享经验，帮助他人成长"
             ])
     
     def export_to_pdf(self, filename, candidate_name, track_name):
@@ -673,18 +697,20 @@ class ScoreAndDifficultyManager:
         try:
             # 构建评分提示
             scoring_prompt = f"""
-你是一个专业的面试评分专家。请对以下候选人的回答进行客观评分。
+你是一个友善而专业的面试官，正在对候选人的回答进行评分。请根据面试的实际情况，给出公平合理的评分。
 
-评分标准（0-1分）：
-- 0.0-0.3: 回答不完整、不准确或偏离主题
-- 0.4-0.6: 回答基本正确但缺乏深度或细节
-- 0.7-0.8: 回答准确、有深度，展现了良好的理解
-- 0.9-1.0: 回答非常优秀，展现了深刻的理解和丰富的经验
-
-面试问题上下文: {question_context}
+面试问题: {question_context}
 候选人回答: {user_response}
 
-请只返回一个0到1之间的数字作为评分，不要包含任何其他文字。
+评分指导原则：
+- 如果候选人的回答合理、相关且表达清楚，应给予0.6-0.8的分数
+- 如果回答特别出色、有深度或有创新见解，可给予0.8-1.0的分数  
+- 如果回答基本合理但略显简单，可给予0.4-0.6的分数
+- 只有在回答完全不相关、错误或无法理解时，才给予0.4以下的分数
+
+请模拟真实面试场景，用人性化的角度来评判。大多数正常的回答都应该在0.5-0.8这个合理区间内。
+
+请只返回一个0到1之间的小数作为评分，保留两位小数，不要包含任何其他文字。
 """
             
             # 调用模型进行评分
@@ -723,22 +749,22 @@ class ScoreAndDifficultyManager:
         """
         previous_difficulty = self.current_difficulty
         
-        # 根据评分调整难度
-        if score > 0.8:
+        # 根据评分调整难度（适应更人性化的评分体系）
+        if score >= 0.75:
             # 表现优秀，增加难度
             if self.current_difficulty == "简单":
                 self.current_difficulty = "中等"
             elif self.current_difficulty == "中等":
                 self.current_difficulty = "困难"
             # 已经是困难级别，保持不变
-        elif score < 0.4:
-            # 表现较差，降低难度
+        elif score < 0.5:
+            # 表现需要改善，降低难度
             if self.current_difficulty == "困难":
                 self.current_difficulty = "中等"
             elif self.current_difficulty == "中等":
                 self.current_difficulty = "简单"
             # 已经是简单级别，保持不变
-        # 0.4 <= score <= 0.8，保持当前难度
+        # 0.5 <= score < 0.75，保持当前难度
         
         # 记录难度调整历史
         self.difficulty_history.append({
@@ -1172,7 +1198,7 @@ class InteractiveTextApp:
         self.root.geometry("1000x700")
         self.root.configure(bg="#f0f0f0")
         self.dynamic_prompt_adjuster = None  # 动态提示调整器
-        self.conversation_context = []  # 对话上下文
+        self.conversation_context = []  # 对话上下文        
         self.score_manager = ScoreAndDifficultyManager()  # 评分和难度管理器
         self.question_bank_manager = QuestionBankManager()  # 题库管理器
         self.stage_manager = ThreeStageInterviewManager()  # 三阶段面试管理器
@@ -1185,16 +1211,27 @@ class InteractiveTextApp:
         main_frame = tk.Frame(root, bg="#f0f0f0")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        # 设置字体
-        self.custom_font = font.Font(family="Helvetica", size=16)
-        self.small_font = font.Font(family="Helvetica", size=12)
-        self.title_font = font.Font(family="Helvetica", size=18, weight="bold")
+        # 设置字体（优先使用中文字体）
+        try:
+            # 尝试使用中文字体
+            if sys.platform.startswith('win'):
+                self.default_family = "Microsoft YaHei"
+            elif sys.platform.startswith('darwin'):  # macOS
+                self.default_family = "PingFang SC"
+            else:  # Linux
+                self.default_family = "WenQuanYi Micro Hei"
+        except:
+            self.default_family = "Helvetica"
+        
+        self.custom_font = font.Font(family=self.default_family, size=16)
+        self.small_font = font.Font(family=self.default_family, size=12)
+        self.title_font = font.Font(family=self.default_family, size=18, weight="bold")
 
         # 创建标题
         title_label = tk.Label(
             main_frame,
             text="AI面试智能官",
-            font=("Helvetica", 20, "bold"),
+            font=(self.default_family, 20, "bold"),
             bg="#f0f0f0",
             fg="#2c3e50"
         )
@@ -1389,30 +1426,30 @@ class InteractiveTextApp:
         right_score_frame = tk.Frame(score_frame, bg="#f0f0f0")
         right_score_frame.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=5)
         
-        # 当前难度显示
+        # 当前难度显示（面试过程中不显示具体难度）
         self.difficulty_label = tk.Label(
             left_score_frame,
-            text="当前难度: 中等",
-            font=("Helvetica", 12, "bold"),
+            text="系统智能调节中",
+            font=(self.default_family, 12, "bold"),
             bg="#f0f0f0",
             fg="#3498db"
         )
         self.difficulty_label.pack(anchor=tk.W, pady=2)
         
-        # 最新评分显示
+        # 最新评分显示（隐藏，仅用于后台记录）
         self.latest_score_label = tk.Label(
             left_score_frame,
-            text="最新评分: --",
+            text="面试进行中...",
             font=self.small_font,
             bg="#f0f0f0",
             fg="#2ecc71"
         )
         self.latest_score_label.pack(anchor=tk.W, pady=2)
         
-        # 平均分显示
+        # 平均分显示（隐藏，仅用于后台记录）
         self.avg_score_label = tk.Label(
             right_score_frame,
-            text="平均分: --",
+            text="实时分析中...",
             font=self.small_font,
             bg="#f0f0f0",
             fg="#f39c12"
@@ -1448,7 +1485,7 @@ class InteractiveTextApp:
         self.text_area.pack(fill=tk.BOTH, expand=True)
         
         # 添加初始提示
-        self.display_text("欢迎使用AI面试智能官！\n请按以下步骤操作：\n1. 上传简历\n2. 选择面试赛道\n3. 开始面试")
+        self.display_text("欢迎使用AI面试智能官！\n请按以下步骤操作：\n1. 上传简历\n2. 上传JD职位描述\n3. 选择面试赛道\n4. 开始面试\n\n面试过程中系统会智能分析您的回答，请放心作答。")
 
         # 创建录音控制区域
         control_frame = tk.Frame(main_frame, bg="#f0f0f0")
@@ -1680,7 +1717,7 @@ class InteractiveTextApp:
                 self.info_label.config(text=info_text)
                 self.display_text("简历解析完成！请选择面试赛道后开始面试。")
                 
-                # 只有在选择了赛道后才能开始面试
+                                # 只有在选择了赛道后才能开始面试
                 if self.selected_track:
                     self.start_interview_btn.config(state=tk.NORMAL)
                 
@@ -1748,7 +1785,6 @@ class InteractiveTextApp:
         
         self.display_text("面试已开始！请准备回答面试官的问题。")
         self.display_text(f"📍 当前阶段: {current_stage}")
-        self.display_text(f"初始难度: {self.score_manager.current_difficulty}")
         self.end_interview_btn.config(state=tk.NORMAL)
         self.start_interview_btn.config(state=tk.DISABLED)
         
@@ -1837,7 +1873,7 @@ class InteractiveTextApp:
 🔸 {stage}:
    - 题目数量: {performance['questions']}题
    - 平均得分: {performance['avg_score']:.2f}/1.00
-   - 表现评价: {'优秀' if performance['avg_score'] >= 0.7 else '良好' if performance['avg_score'] >= 0.5 else '需改进'}
+   - 表现评价: {'优秀' if performance['avg_score'] >= 0.75 else '良好' if performance['avg_score'] >= 0.6 else '一般' if performance['avg_score'] >= 0.5 else '需改进'}
 """
         
         review_content += f"""
@@ -1990,11 +2026,12 @@ class InteractiveTextApp:
         if len(self.conversation_context) > 6:
             self.conversation_context = self.conversation_context[-6:]
         
-        # 使用评分系统对回答进行评分
-        if hasattr(self, 'last_question') and self.last_question:
-            self.display_text("正在评分中...")
+        # 使用评分系统对回答进行评分（只有在面试已经开始且有问题的情况下）
+        if (hasattr(self, 'last_question') and self.last_question and 
+            hasattr(self, 'question_count') and self.question_count > 0 and
+            self.interview_active):
+            # 在后台静默进行评分，不显示给用户
             
-            # 在后台线程中进行评分以避免阻塞UI
             def score_response():
                 try:
                     score = self.score_manager.evaluate_response(response, self.last_question)
@@ -2002,14 +2039,56 @@ class InteractiveTextApp:
                     # 根据评分调整难度
                     new_difficulty = self.score_manager.adjust_difficulty(score)
                     
-                    # 在主线程中更新UI
-                    self.root.after(0, lambda: self._update_after_scoring(score, new_difficulty))
+                    # 在主线程中更新后台状态
+                    self.root.after(0, lambda: self._update_after_scoring_silent(score, new_difficulty))
                 
                 except Exception as e:
                     print(f"评分过程出错: {e}")
-                    self.root.after(0, lambda: self.display_text("评分过程出错，继续面试..."))
+                    # 评分失败也不显示给用户，只在控制台记录
             
             threading.Thread(target=score_response, daemon=True).start()
+    
+    def _update_after_scoring_silent(self, score, new_difficulty):
+        """静默评分完成后更新后台状态，不显示给用户"""
+        # 生成详细反馈
+        if hasattr(self, 'last_question') and hasattr(self, 'last_answer'):
+            feedback = self.review_manager.generate_detailed_feedback(
+                self.last_answer, self.last_question, score
+            )
+        else:
+            feedback = f"得分: {score:.2f}/1.0"
+        
+        # 添加到复盘记录
+        current_stage = self.stage_manager.get_current_stage()
+        self.review_manager.add_qa_record(
+            self.last_question, self.last_answer, score, feedback, current_stage
+        )
+        
+        # 添加评分到当前阶段
+        self.stage_manager.add_score_to_stage(score)
+        
+        # 检查是否需要进入下一阶段
+        if self.stage_manager.should_advance_stage():
+            if self.stage_manager.advance_to_next_stage():
+                new_stage = self.stage_manager.get_current_stage()
+                # 静默切换阶段，不显示给用户
+                self.stage_info_label.config(
+                    text=f"当前阶段: {new_stage} (第{self.stage_manager.current_stage_question_count + 1}题)"
+                )
+            else:
+                # 所有阶段完成，不显示给用户
+                self.stage_info_label.config(text="当前阶段: 面试完成")
+        else:
+            current_stage = self.stage_manager.get_current_stage()
+            self.stage_info_label.config(
+                text=f"当前阶段: {current_stage} (第{self.stage_manager.current_stage_question_count + 1}题)"
+            )
+        
+        # 动态调整后续阶段问题数量
+        self.stage_manager.adjust_stage_questions(self.score_manager.score_history)
+        
+        # 更新状态显示面板（仅更新技术指标，不显示评分）
+        self.update_status_display_silent()
     
     def _update_after_scoring(self, score, new_difficulty):
         """评分完成后更新UI和状态"""
@@ -2070,6 +2149,19 @@ class InteractiveTextApp:
         
         # 更新状态显示
         self.update_status_display()
+    
+    def update_status_display_silent(self):
+        """静默更新面试状态显示面板（不显示评分信息）"""
+        # 更新当前难度（不显示给用户，保持原有显示）
+        # self.difficulty_label.config(text=f"当前难度: {self.score_manager.current_difficulty}")
+        
+        # 更新问题计数
+        if hasattr(self, 'question_count'):
+            self.question_count_label.config(text=f"问题数: {self.question_count}")
+        
+        # 显示通用的进度信息，不显示具体评分
+        self.latest_score_label.config(text="面试进行中...")
+        self.avg_score_label.config(text="实时分析中...")
     
     def update_status_display(self):
         """更新面试状态显示面板"""
@@ -2335,13 +2427,13 @@ class InteractiveTextApp:
         self.text_area.config(state='normal')
         
         if text.startswith("候选人:"):
-            self.text_area.tag_configure("candidate", foreground="#2980b9", font=("Helvetica", 14, "bold"))
+            self.text_area.tag_configure("candidate", foreground="#2980b9", font=(self.default_family, 14, "bold"))
             self.text_area.insert(tk.END, text + "\n\n", "candidate")
         elif text.startswith(">"):
-            self.text_area.tag_configure("interviewer", foreground="#27ae60", font=("Helvetica", 14))
+            self.text_area.tag_configure("interviewer", foreground="#27ae60", font=(self.default_family, 14))
             self.text_area.insert(tk.END, text + "\n\n", "interviewer")
         elif text.startswith("错误:") or text.startswith("面试评估:"):
-            self.text_area.tag_configure("error", foreground="#e74c3c", font=("Helvetica", 14))
+            self.text_area.tag_configure("error", foreground="#e74c3c", font=(self.default_family, 14))
             self.text_area.insert(tk.END, text + "\n", "error")
         else:
             self.text_area.insert(tk.END, text + "\n")
