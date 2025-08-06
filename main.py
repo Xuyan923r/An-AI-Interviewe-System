@@ -1231,9 +1231,11 @@ class InteractiveTextApp:
         self.stage_manager = ThreeStageInterviewManager()  # 三阶段面试管理器
         self.jd_analyzer = JDAnalyzer()  # JD分析器
         self.review_manager = InterviewReviewManager()  # 复盘管理器
+        self.parser = ResumeParser()  # 简历解析器
         self.last_question = ""  # 保存最后一个问题用于评分
         self.selected_track = None  # 选择的面试赛道
-        self.jd_data = None  # JD数据        
+        self.jd_data = None  # JD数据
+        self.resume_data = None  # 简历数据
         # 创建主框架
         main_frame = tk.Frame(root, bg="#f0f0f0")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -1314,7 +1316,6 @@ class InteractiveTextApp:
         self.start_interview_btn = tk.Button(
             button_frame,
             text="开始面试",
-            state=tk.DISABLED,  # 初始状态为禁用
             command=self.start_interview,
             font=self.small_font,
             bg="#2ecc71",
@@ -1322,8 +1323,7 @@ class InteractiveTextApp:
             padx=10,
             pady=5,
             relief=tk.FLAT,
-            state=tk.DISABLED  # 初始状态禁用
-        )
+            state=tk.DISABLED)
         self.start_interview_btn.pack(side=tk.LEFT, padx=5)
         
         # 添加面试结束按钮
@@ -2254,7 +2254,7 @@ class InteractiveTextApp:
             # 如果没有找到 ">"，尝试找到最后一个问号之后的内容
             last_question = model_output.rfind("?")
             if last_question != -1:
-            return model_output[:last_question + 1].strip()
+                return model_output[:last_question + 1].strip()
             
             # 如果还是没有找到，返回整个输出
         return model_output.strip()
@@ -2430,7 +2430,7 @@ class InteractiveTextApp:
                     self.full_evaluation = model_output
                     
                     # 只显示简短的结论
-                    self.message_queue.put("面试已结束！请点击"查看复盘"按钮查看详细评估，或导出PDF报告查看完整分析。")
+                    self.message_queue.put("面试已结束,请点击查看复盘按钮查看详细评估，或导出PDF报告查看完整分析。")
                     self.solution.use_pyttsx3("面试评估已完成")
                     continue
                 
