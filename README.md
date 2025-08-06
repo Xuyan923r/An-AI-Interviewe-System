@@ -673,7 +673,7 @@ ollama list
 
 ## 👥 作者
 
-- **主要开发者**: [Ziaotao Su , Xuyan Ye]
+- **主要开发者**: [Zitao Su , Xuyan Ye]
 - **邮箱**:xuyan923r@gmail.com
 
 ## 🙏 致谢
