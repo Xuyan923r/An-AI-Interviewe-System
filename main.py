@@ -417,12 +417,33 @@ class InterviewReviewManager:
     def export_to_pdf(self, filename, candidate_name, track_name):
         """导出面试记录为PDF"""
         try:
-            # 注册中文字体（如果可用）
-            try:
-                pdfmetrics.registerFont(TTFont('SimHei', '/System/Library/Fonts/Helvetica.ttc'))
-                chinese_font = 'SimHei'
-            except:
-                chinese_font = 'Helvetica'
+            # 注册中文字体
+            if sys.platform.startswith('darwin'):  # macOS
+                try:
+                    pdfmetrics.registerFont(TTFont('PingFang', '/System/Library/Fonts/PingFang.ttc'))
+                    chinese_font = 'PingFang'
+                except:
+                    try:
+                        pdfmetrics.registerFont(TTFont('STHeiti', '/System/Library/Fonts/STHeiti Light.ttc'))
+                        chinese_font = 'STHeiti'
+                    except:
+                        chinese_font = 'Helvetica'
+            elif sys.platform.startswith('win'):  # Windows
+                try:
+                    pdfmetrics.registerFont(TTFont('SimSun', 'C:/Windows/Fonts/simsun.ttc'))
+                    chinese_font = 'SimSun'
+                except:
+                    try:
+                        pdfmetrics.registerFont(TTFont('Microsoft YaHei', 'C:/Windows/Fonts/msyh.ttc'))
+                        chinese_font = 'Microsoft YaHei'
+                    except:
+                        chinese_font = 'Helvetica'
+            else:  # Linux
+                try:
+                    pdfmetrics.registerFont(TTFont('WenQuanYi', '/usr/share/fonts/wenquanyi/wqy-zenhei.ttc'))
+                    chinese_font = 'WenQuanYi'
+                except:
+                    chinese_font = 'Helvetica'
             
             doc = SimpleDocTemplate(filename, pagesize=A4)
             styles = getSampleStyleSheet()
@@ -480,6 +501,12 @@ class InterviewReviewManager:
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ]))
             content.append(basic_table)
+            content.append(Spacer(1, 20))
+            
+            # 完整评估报告
+            content.append(Paragraph("评估报告", heading_style))
+            if hasattr(self, 'full_evaluation'):
+                content.append(Paragraph(self.full_evaluation, normal_style))
             content.append(Spacer(1, 20))
             
             # 各阶段表现
@@ -1287,6 +1314,7 @@ class InteractiveTextApp:
         self.start_interview_btn = tk.Button(
             button_frame,
             text="开始面试",
+            state=tk.DISABLED,  # 初始状态为禁用
             command=self.start_interview,
             font=self.small_font,
             bg="#2ecc71",
@@ -1552,6 +1580,9 @@ class InteractiveTextApp:
         self.model_thread = threading.Thread(target=self.process_model_responses, daemon=True)
         self.model_thread.start()
         
+        # 检查初始状态
+        self.check_interview_ready()
+        
         # 状态变量
         self.recording_start_time = 0
         self.progress_active = False
@@ -1617,9 +1648,8 @@ class InteractiveTextApp:
             fg="#2ecc71"
         )
         
-        # 启用开始面试按钮（如果已上传简历）
-        if self.resume_data and self.selected_track:
-            self.start_interview_btn.config(state=tk.NORMAL)
+        # 更新赛道选择状态
+        self.check_interview_ready()
         
         self.display_text(f"已选择 {track} 赛道！题库已加载完成。")
         
@@ -1665,6 +1695,10 @@ class InteractiveTextApp:
                 self.jd_data = self.jd_analyzer.parse_jd(jd_content)
                 jd_summary = self.jd_analyzer.get_jd_summary()
                 self.display_text(f"JD解析完成！\n{jd_summary}")
+                
+                # 检查是否可以开始面试
+                self.check_interview_ready()
+                    
                 jd_window.destroy()
             else:
                 tk.messagebox.showerror("错误", "请输入JD内容")
@@ -1715,11 +1749,10 @@ class InteractiveTextApp:
                 info_text += f"技能: {len(self.resume_data['skills'])}项"
                 
                 self.info_label.config(text=info_text)
-                self.display_text("简历解析完成！请选择面试赛道后开始面试。")
+                self.display_text("简历解析完成！")
                 
-                                # 只有在选择了赛道后才能开始面试
-                if self.selected_track:
-                    self.start_interview_btn.config(state=tk.NORMAL)
+                # 更新简历状态
+                self.resume_data = self.resume_data
                 
                 # 创建动态提示调整器
                 self.dynamic_prompt_adjuster = DynamicPromptAdjuster(self.resume_data)
@@ -1763,6 +1796,10 @@ class InteractiveTextApp:
         
         if not self.selected_track:
             self.display_text("请先选择面试赛道！")
+            return
+            
+        if not self.jd_data:
+            self.display_text("请先上传JD！")
             return
         
         self.interview_active = True
@@ -1831,10 +1868,14 @@ class InteractiveTextApp:
             tk.messagebox.showinfo("提示", "暂无面试记录")
             return
         
-        # 生成综合评估
-        assessment = self.review_manager.generate_overall_assessment(
-            self.stage_manager, self.score_manager
-        )
+        # 获取完整评估
+        if hasattr(self, 'full_evaluation'):
+            assessment = self.full_evaluation
+        else:
+            # 如果没有完整评估，生成一个
+            assessment = self.review_manager.generate_overall_assessment(
+                self.stage_manager, self.score_manager
+            )
         
         # 创建复盘窗口
         review_window = tk.Toplevel(self.root)
@@ -2188,22 +2229,35 @@ class InteractiveTextApp:
         self.time_label.config(text="0.0s")
 
     def extract_question(self, model_output):
-        """从模型输出中提取">"之后的问题部分"""
+        """从模型输出中提取问题部分，过滤掉思考过程"""
+        # 移除<think>标签之间的内容
+        while "<think>" in model_output and "</think>" in model_output:
+            think_start = model_output.find("<think>")
+            think_end = model_output.find("</think>") + len("</think>")
+            model_output = model_output[:think_start] + model_output[think_end:]
+        
         # 寻找 ">" 符号
         arrow_index = model_output.find(">")
-        
         if arrow_index != -1:
             # 提取 ">" 之后的内容
             question_text = model_output[arrow_index + 1:].strip()
+            # 如果问题后面还有内容，只保留到第一个句号或问号
+            end_marks = ['.', '?', '！', '。', '？']
+            end_indices = [question_text.find(mark) for mark in end_marks if mark in question_text]
+            if end_indices:
+                valid_indices = [i for i in end_indices if i != -1]
+                if valid_indices:
+                    first_end = min(valid_indices) + 1
+                    question_text = question_text[:first_end].strip()
             return question_text
-        else:
+        
             # 如果没有找到 ">"，尝试找到最后一个问号之后的内容
             last_question = model_output.rfind("?")
             if last_question != -1:
-                return model_output[last_question + 1:].strip()
+            return model_output[:last_question + 1].strip()
             
             # 如果还是没有找到，返回整个输出
-            return model_output
+        return model_output.strip()
 
     def build_dynamic_prompt(self):
         """根据论文结构构建动态提示 [I; H; K; E]，集成三阶段面试和难度调整"""
@@ -2243,7 +2297,7 @@ class InteractiveTextApp:
         
         instruction += (
             "你必须严格遵守以下规则：\n"
-            "1. 在输出问题时，先进行思考（使用<think>标签包裹思考过程），然后输出问题（使用</think>标签结束思考）\n"
+            "1. 直接输出问题，不要输出思考过程\n"
             "2. 在问题前添加'>'符号作为前缀\n"
             "3. 只输出问题内容，不要添加任何前缀（如'面试官：'）\n"
             "4. 每次只提一个问题\n"
@@ -2251,7 +2305,7 @@ class InteractiveTextApp:
             "6. 问题难度必须与当前设定的难度级别匹配\n"
             f"7. 问题必须符合当前{self.stage_manager.get_current_stage()}阶段要求\n"
             f"8. 问题必须符合{self.selected_track}赛道的专业要求\n"
-            "9. 面试结束时给出全面评估，包括评分总结\n"
+            "9. 面试结束时只评价候选人表现，不要评价问题质量\n"
         )
         
         # H: 历史细节
@@ -2337,17 +2391,19 @@ class InteractiveTextApp:
                     difficulty_info = self.score_manager.get_difficulty_progression()
                     
                     evaluation_content = f"""面试结束，请根据整个面试过程给出候选人综合评估。
+请从以下几个方面进行评价：
 
-评分数据参考：
-{score_info}
+1. 技术掌握程度
+2. 项目经验深度
+3. 解决问题能力
+4. 沟通表达能力
+5. 学习成长潜力
 
-{difficulty_info}
-
-请提供：
-1. 综合技能评价
-2. 优势和不足
-3. 建议改进方向
-4. 最终面试结论"""
+注意：
+- 只评价候选人的表现，不要评价问题的质量
+- 不要显示具体分数，用定性描述替代
+- 重点关注候选人的优势和可提升空间
+- 给出明确的是否通过面试的结论"""
 
                     self.conversation_history.append({
                         "role": "user", 
@@ -2368,9 +2424,13 @@ class InteractiveTextApp:
                 # 将模型的完整回复添加到对话历史
                 self.conversation_history.append({"role": "assistant", "content": model_output})
                 
-                # 如果是结束面试的评估，直接显示整个内容
+                # 如果是结束面试的评估，只显示简短总结
                 if action == "end_interview":
-                    self.message_queue.put(f"面试评估: {model_output}")
+                    # 保存完整评估结果用于PDF导出
+                    self.full_evaluation = model_output
+                    
+                    # 只显示简短的结论
+                    self.message_queue.put("面试已结束！请点击"查看复盘"按钮查看详细评估，或导出PDF报告查看完整分析。")
                     self.solution.use_pyttsx3("面试评估已完成")
                     continue
                 
@@ -2421,6 +2481,26 @@ class InteractiveTextApp:
             self.root.after(100, check_queue)
 
         check_queue()
+
+    def check_interview_ready(self):
+        """检查是否满足开始面试的条件"""
+        remaining = []
+        if not self.resume_data:
+            remaining.append("上传简历")
+        if not self.selected_track:
+            remaining.append("选择赛道")
+        if not self.jd_data:
+            remaining.append("上传JD")
+            
+        if not remaining:  # 所有条件都满足
+            self.start_interview_btn.config(state=tk.NORMAL)
+            self.display_text("✅ 已完成所有准备工作，可以开始面试！")
+        else:
+            self.start_interview_btn.config(state=tk.DISABLED)
+            if len(remaining) > 1:
+                self.display_text(f"⏳ 请完成以下步骤：{', '.join(remaining)}")
+            else:
+                self.display_text(f"⏳ 请{remaining[0]}后开始面试")
 
     def display_text(self, text):
         """将文本显示在文本框中"""

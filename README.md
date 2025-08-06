@@ -1,4 +1,4 @@
-# 🤖 AI面试智能官 - 三阶段多赛道智能面试系统
+# 🤖 AI面试智能官 - 你的模拟面试助手
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
