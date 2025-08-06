@@ -1,4 +1,3 @@
-
 import time
 import ollama
 import pyttsx3
@@ -16,6 +15,626 @@ import math
 import fitz  # PyMuPDF for PDF parsing
 import docx  # For DOCX parsing
 import re
+import pandas as pd
+import random
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from datetime import datetime
+
+
+# JD职位描述解析模块
+class JDAnalyzer:
+    """职位描述分析器"""
+    def __init__(self):
+        self.jd_data = {}
+        
+    def parse_jd(self, jd_text):
+        """解析JD文本，提取关键信息"""
+        self.jd_data = {
+            "position": "",
+            "requirements": [],
+            "responsibilities": [],
+            "skills": [],
+            "experience": "",
+            "education": "",
+            "keywords": []
+        }
+        
+        # 提取职位名称
+        lines = jd_text.split('\n')
+        if lines:
+            self.jd_data["position"] = lines[0].strip()
+        
+        # 关键词匹配提取
+        requirements_keywords = ["要求", "任职要求", "岗位要求", "职位要求"]
+        responsibilities_keywords = ["职责", "工作职责", "岗位职责", "工作内容"]
+        skills_keywords = ["技能", "技术要求", "专业技能", "掌握"]
+        
+        current_section = ""
+        for line in lines[1:]:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # 判断当前段落类型
+            if any(keyword in line for keyword in requirements_keywords):
+                current_section = "requirements"
+                continue
+            elif any(keyword in line for keyword in responsibilities_keywords):
+                current_section = "responsibilities"
+                continue
+            elif any(keyword in line for keyword in skills_keywords):
+                current_section = "skills"
+                continue
+            
+            # 添加到对应段落
+            if current_section == "requirements":
+                self.jd_data["requirements"].append(line)
+            elif current_section == "responsibilities":
+                self.jd_data["responsibilities"].append(line)
+            elif current_section == "skills":
+                self.jd_data["skills"].append(line)
+        
+        # 提取技术关键词
+        tech_keywords = ["Java", "Python", "JavaScript", "React", "Vue", "Node.js", "Spring", "MySQL", 
+                        "Redis", "Docker", "Kubernetes", "微服务", "分布式", "高并发", "架构设计",
+                        "算法", "数据结构", "设计模式", "Linux", "Git", "Jenkins", "DevOps"]
+        
+        jd_lower = jd_text.lower()
+        for keyword in tech_keywords:
+            if keyword.lower() in jd_lower:
+                self.jd_data["keywords"].append(keyword)
+        
+        return self.jd_data
+    
+    def get_jd_summary(self):
+        """获取JD摘要"""
+        if not self.jd_data:
+            return "未解析JD信息"
+        
+        return f"""
+职位: {self.jd_data['position']}
+技术要求: {', '.join(self.jd_data['keywords'][:8])}
+要求数量: {len(self.jd_data['requirements'])}项
+职责数量: {len(self.jd_data['responsibilities'])}项
+"""
+
+
+# 三阶段面试管理器
+class ThreeStageInterviewManager:
+    """三阶段面试管理器：非技术问题、经历类问题、技术类问题"""
+    def __init__(self):
+        self.stages = ["非技术问题", "经历类问题", "技术类问题"]
+        self.current_stage = 0
+        self.stage_questions = {
+            "非技术问题": [],
+            "经历类问题": [],
+            "技术类问题": []
+        }
+        self.stage_scores = {
+            "非技术问题": [],
+            "经历类问题": [],
+            "技术类问题": []
+        }
+        self.questions_per_stage = [2, 3, 3]  # 每阶段默认问题数
+        self.current_stage_question_count = 0
+        
+    def get_current_stage(self):
+        """获取当前阶段"""
+        if self.current_stage < len(self.stages):
+            return self.stages[self.current_stage]
+        return "面试结束"
+    
+    def should_advance_stage(self):
+        """判断是否应该进入下一阶段"""
+        return self.current_stage_question_count >= self.questions_per_stage[self.current_stage]
+    
+    def advance_to_next_stage(self):
+        """进入下一阶段"""
+        if self.current_stage < len(self.stages) - 1:
+            self.current_stage += 1
+            self.current_stage_question_count = 0
+            return True
+        return False
+    
+    def add_question_to_stage(self, question, stage=None):
+        """添加问题到当前阶段"""
+        if stage is None:
+            stage = self.get_current_stage()
+        if stage in self.stage_questions:
+            self.stage_questions[stage].append(question)
+            self.current_stage_question_count += 1
+    
+    def add_score_to_stage(self, score, stage=None):
+        """添加评分到当前阶段"""
+        if stage is None:
+            stage = self.get_current_stage()
+        if stage in self.stage_scores:
+            self.stage_scores[stage].append(score)
+    
+    def get_stage_prompt(self, jd_data=None, resume_data=None):
+        """获取当前阶段的提示"""
+        current_stage = self.get_current_stage()
+        
+        if current_stage == "非技术问题":
+            return self._get_non_technical_prompt(jd_data, resume_data)
+        elif current_stage == "经历类问题":
+            return self._get_experience_prompt(resume_data)
+        elif current_stage == "技术类问题":
+            return self._get_technical_prompt(jd_data)
+        else:
+            return "面试已结束"
+    
+    def _get_non_technical_prompt(self, jd_data, resume_data):
+        """非技术问题阶段提示"""
+        prompt = f"""
+### 当前阶段：非技术问题（第{self.current_stage_question_count + 1}题）
+
+这是面试的第一阶段，主要考察候选人的基本情况、沟通能力和职业规划。
+
+**问题类型要求：**
+1. 自我介绍类问题
+2. 职业发展规划
+3. 对公司和岗位的了解
+4. 基本的工作态度和价值观
+
+**基于简历信息生成问题：**
+"""
+        if resume_data:
+            prompt += f"- 候选人姓名: {resume_data.get('name', '未知')}\n"
+            prompt += f"- 工作经验: {len(resume_data.get('experience', []))}项\n"
+            prompt += f"- 主要技能: {', '.join(resume_data.get('skills', [])[:3])}\n"
+        
+        if jd_data:
+            prompt += f"- 目标职位: {jd_data.get('position', '未知')}\n"
+        
+        return prompt
+    
+    def _get_experience_prompt(self, resume_data):
+        """经历类问题阶段提示"""
+        prompt = f"""
+### 当前阶段：经历类问题（第{self.current_stage_question_count + 1}题）
+
+这是面试的第二阶段，深入挖掘候选人的项目经历和工作经验。
+
+**问题类型要求：**
+1. 深入挖掘简历中的项目经历
+2. 具体技术实现细节
+3. 遇到的挑战和解决方案
+4. 团队协作和角色分工
+
+**基于简历经历生成问题：**
+"""
+        if resume_data:
+            if resume_data.get('projects'):
+                prompt += "**项目经历：**\n"
+                for project in resume_data['projects'][:3]:
+                    prompt += f"- {project}\n"
+            
+            if resume_data.get('experience'):
+                prompt += "**工作经验：**\n"
+                for exp in resume_data['experience'][:3]:
+                    prompt += f"- {exp}\n"
+        
+        return prompt
+    
+    def _get_technical_prompt(self, jd_data):
+        """技术类问题阶段提示"""
+        prompt = f"""
+### 当前阶段：技术类问题（第{self.current_stage_question_count + 1}题）
+
+这是面试的第三阶段，重点考察候选人的专业技术能力。
+
+**问题类型要求：**
+1. 基于JD要求的核心技术能力
+2. 算法和数据结构（如果相关）
+3. 系统设计和架构能力
+4. 技术深度和广度
+
+**基于JD要求生成问题：**
+"""
+        if jd_data:
+            if jd_data.get('keywords'):
+                prompt += f"**关键技术要求：** {', '.join(jd_data['keywords'])}\n"
+            if jd_data.get('requirements'):
+                prompt += "**技术要求细节：**\n"
+                for req in jd_data['requirements'][:3]:
+                    prompt += f"- {req}\n"
+        
+        return prompt
+    
+    def get_stage_summary(self):
+        """获取各阶段总结"""
+        summary = "### 三阶段面试总结：\n"
+        for i, stage in enumerate(self.stages):
+            scores = self.stage_scores[stage]
+            if scores:
+                avg_score = sum(scores) / len(scores)
+                summary += f"**{stage}**: {len(scores)}题, 平均分: {avg_score:.2f}\n"
+            else:
+                summary += f"**{stage}**: 未完成\n"
+        return summary
+    
+    def adjust_stage_questions(self, recent_scores):
+        """根据表现动态调整后续阶段的问题数量"""
+        if len(recent_scores) < 2:
+            return
+        
+        avg_recent = sum(recent_scores[-2:]) / len(recent_scores[-2:])
+        
+        # 根据表现调整后续阶段问题数量
+        if avg_recent > 0.8:
+            # 表现优秀，可以适当增加技术问题数量
+            if self.current_stage < 2:
+                self.questions_per_stage[2] = min(5, self.questions_per_stage[2] + 1)
+        elif avg_recent < 0.4:
+            # 表现较差，适当减少技术问题，增加基础问题
+            if self.current_stage < 2:
+                self.questions_per_stage[2] = max(2, self.questions_per_stage[2] - 1)
+                self.questions_per_stage[1] = min(4, self.questions_per_stage[1] + 1)
+
+
+# 面试复盘和报告生成器
+class InterviewReviewManager:
+    """面试复盘和报告管理器"""
+    def __init__(self):
+        self.interview_records = []
+        self.detailed_feedback = []
+        self.overall_assessment = {}
+        
+    def add_qa_record(self, question, answer, score, feedback, stage):
+        """添加问答记录"""
+        record = {
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "stage": stage,
+            "question": question,
+            "answer": answer,
+            "score": score,
+            "feedback": feedback
+        }
+        self.interview_records.append(record)
+    
+    def generate_detailed_feedback(self, answer, question_context, score):
+        """生成详细反馈"""
+        try:
+            feedback_prompt = f"""
+请作为专业面试官，对以下回答给出详细的评价和改进建议：
+
+问题背景：{question_context}
+候选人回答：{answer}
+当前评分：{score:.2f}
+
+请从以下维度给出反馈：
+1. 回答的完整性和准确性
+2. 技术深度和理解程度
+3. 表达清晰度和逻辑性
+4. 具体的改进建议
+
+请用简洁的中文回复，不超过100字。
+"""
+            
+            response = ollama.chat(
+                model="Jerrypoi/deepseek-r1-with-tool-calls:latest",
+                messages=[{"role": "user", "content": feedback_prompt}]
+            )
+            
+            return response['message']['content'].strip()
+        except Exception as e:
+            return f"技术掌握程度：{score:.1f}/1.0，建议加强相关技术的深入学习和实践。"
+    
+    def generate_overall_assessment(self, stage_manager, score_manager):
+        """生成综合评估"""
+        self.overall_assessment = {
+            "interview_date": datetime.now().strftime("%Y年%m月%d日"),
+            "total_questions": len(self.interview_records),
+            "overall_score": sum([r["score"] for r in self.interview_records]) / len(self.interview_records) if self.interview_records else 0,
+            "stage_performance": {},
+            "strengths": [],
+            "weaknesses": [],
+            "improvement_suggestions": []
+        }
+        
+        # 各阶段表现
+        for stage in stage_manager.stages:
+            stage_records = [r for r in self.interview_records if r["stage"] == stage]
+            if stage_records:
+                avg_score = sum([r["score"] for r in stage_records]) / len(stage_records)
+                self.overall_assessment["stage_performance"][stage] = {
+                    "questions": len(stage_records),
+                    "avg_score": avg_score
+                }
+        
+        # 生成优势、不足和建议
+        self._analyze_performance()
+        
+        return self.overall_assessment
+    
+    def _analyze_performance(self):
+        """分析面试表现"""
+        if not self.interview_records:
+            return
+        
+        # 分析各阶段表现
+        stage_scores = {}
+        for record in self.interview_records:
+            stage = record["stage"]
+            if stage not in stage_scores:
+                stage_scores[stage] = []
+            stage_scores[stage].append(record["score"])
+        
+        # 确定优势和不足
+        for stage, scores in stage_scores.items():
+            avg_score = sum(scores) / len(scores)
+            if avg_score >= 0.7:
+                self.overall_assessment["strengths"].append(f"{stage}表现优秀")
+            elif avg_score < 0.5:
+                self.overall_assessment["weaknesses"].append(f"{stage}需要加强")
+        
+        # 生成改进建议
+        overall_score = self.overall_assessment["overall_score"]
+        if overall_score < 0.6:
+            self.overall_assessment["improvement_suggestions"].extend([
+                "建议加强基础技术知识的学习",
+                "多做项目实践，积累实际经验",
+                "提高技术表达和沟通能力"
+            ])
+        elif overall_score < 0.8:
+            self.overall_assessment["improvement_suggestions"].extend([
+                "继续深化技术理解",
+                "关注行业前沿技术发展",
+                "提升系统设计和架构能力"
+            ])
+    
+    def export_to_pdf(self, filename, candidate_name, track_name):
+        """导出面试记录为PDF"""
+        try:
+            # 注册中文字体（如果可用）
+            try:
+                pdfmetrics.registerFont(TTFont('SimHei', '/System/Library/Fonts/Helvetica.ttc'))
+                chinese_font = 'SimHei'
+            except:
+                chinese_font = 'Helvetica'
+            
+            doc = SimpleDocTemplate(filename, pagesize=A4)
+            styles = getSampleStyleSheet()
+            
+            # 创建自定义样式
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontName=chinese_font,
+                fontSize=18,
+                spaceAfter=30,
+                alignment=1  # 居中
+            )
+            
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading2'],
+                fontName=chinese_font,
+                fontSize=14,
+                spaceAfter=12
+            )
+            
+            normal_style = ParagraphStyle(
+                'CustomNormal',
+                parent=styles['Normal'],
+                fontName=chinese_font,
+                fontSize=10,
+                spaceAfter=6
+            )
+            
+            content = []
+            
+            # 标题
+            content.append(Paragraph(f"AI面试报告 - {candidate_name}", title_style))
+            content.append(Spacer(1, 20))
+            
+            # 基本信息
+            content.append(Paragraph("基本信息", heading_style))
+            basic_info = [
+                ["面试日期", self.overall_assessment.get("interview_date", "")],
+                ["面试赛道", track_name],
+                ["总题数", str(self.overall_assessment.get("total_questions", 0))],
+                ["综合得分", f"{self.overall_assessment.get('overall_score', 0):.2f}/1.00"]
+            ]
+            
+            basic_table = Table(basic_info, colWidths=[2*inch, 3*inch])
+            basic_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), chinese_font),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            content.append(basic_table)
+            content.append(Spacer(1, 20))
+            
+            # 各阶段表现
+            content.append(Paragraph("各阶段表现", heading_style))
+            stage_data = [["阶段", "题数", "平均分"]]
+            for stage, performance in self.overall_assessment.get("stage_performance", {}).items():
+                stage_data.append([
+                    stage,
+                    str(performance["questions"]),
+                    f"{performance['avg_score']:.2f}"
+                ])
+            
+            stage_table = Table(stage_data, colWidths=[2*inch, 1*inch, 1*inch])
+            stage_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, -1), chinese_font),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            content.append(stage_table)
+            content.append(Spacer(1, 20))
+            
+            # 详细问答记录
+            content.append(Paragraph("详细问答记录", heading_style))
+            for i, record in enumerate(self.interview_records):
+                content.append(Paragraph(f"第{i+1}题 [{record['stage']}]", normal_style))
+                content.append(Paragraph(f"问题：{record['question']}", normal_style))
+                content.append(Paragraph(f"回答：{record['answer'][:200]}...", normal_style))
+                content.append(Paragraph(f"得分：{record['score']:.2f}", normal_style))
+                content.append(Paragraph(f"反馈：{record['feedback']}", normal_style))
+                content.append(Spacer(1, 10))
+            
+            # 综合评价
+            content.append(Paragraph("综合评价", heading_style))
+            
+            strengths = self.overall_assessment.get("strengths", [])
+            if strengths:
+                content.append(Paragraph("优势：", normal_style))
+                for strength in strengths:
+                    content.append(Paragraph(f"• {strength}", normal_style))
+            
+            weaknesses = self.overall_assessment.get("weaknesses", [])
+            if weaknesses:
+                content.append(Paragraph("待改进：", normal_style))
+                for weakness in weaknesses:
+                    content.append(Paragraph(f"• {weakness}", normal_style))
+            
+            suggestions = self.overall_assessment.get("improvement_suggestions", [])
+            if suggestions:
+                content.append(Paragraph("改进建议：", normal_style))
+                for suggestion in suggestions:
+                    content.append(Paragraph(f"• {suggestion}", normal_style))
+            
+            doc.build(content)
+            return True
+            
+        except Exception as e:
+            print(f"PDF导出失败: {e}")
+            return False
+
+
+# 题库管理模块
+class QuestionBankManager:
+    """题库管理器，支持多赛道面试题库"""
+    def __init__(self):
+        self.question_banks = {}
+        self.tracks = ["后端", "前端", "算法", "测试", "产品", "运营"]
+        self.current_track = None
+        self.load_question_banks()
+    
+    def load_question_banks(self):
+        """加载所有赛道的题库数据"""
+        for track in self.tracks:
+            try:
+                file_path = f"data/data_divided/{track}.csv"
+                df = pd.read_csv(file_path, encoding='utf-8')
+                
+                # 处理不同的CSV格式
+                questions = []
+                if track in ["后端"]:
+                    # 后端格式: 分类,问题
+                    for _, row in df.iterrows():
+                        if len(row) >= 2 and pd.notna(row.iloc[1]):
+                            questions.append({
+                                "category": str(row.iloc[0]).strip(),
+                                "question": str(row.iloc[1]).strip(),
+                                "company": ""
+                            })
+                elif track in ["前端", "运营"]:
+                    # 前端/运营格式: 分类,问题,公司
+                    for _, row in df.iterrows():
+                        if len(row) >= 2 and pd.notna(row.iloc[1]) and "Unnamed" not in str(row.iloc[1]):
+                            questions.append({
+                                "category": str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else "",
+                                "question": str(row.iloc[1]).strip(),
+                                "company": str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ""
+                            })
+                else:
+                    # 其他格式: 分类,问题 或 分类,问题,公司
+                    for _, row in df.iterrows():
+                        if len(row) >= 2 and pd.notna(row.iloc[1]):
+                            questions.append({
+                                "category": str(row.iloc[0]).strip(),
+                                "question": str(row.iloc[1]).strip(),
+                                "company": str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else ""
+                            })
+                
+                # 按难度分类题目
+                self.question_banks[track] = self._categorize_by_difficulty(questions)
+                print(f"已加载 {track} 题库: {len(questions)} 题")
+                
+            except Exception as e:
+                print(f"加载 {track} 题库失败: {e}")
+                self.question_banks[track] = {"简单": [], "中等": [], "困难": []}
+    
+    def _categorize_by_difficulty(self, questions):
+        """根据问题内容和类别自动分类难度"""
+        categorized = {"简单": [], "中等": [], "困难": []}
+        
+        # 定义难度关键词
+        easy_keywords = ["自我介绍", "介绍", "背景", "经历", "基础", "了解", "是什么", "简单"]
+        hard_keywords = ["架构", "设计", "优化", "性能", "复杂", "系统", "深入", "原理", "底层", "高级"]
+        
+        for q in questions:
+            question_text = q["question"].lower()
+            category_text = q["category"].lower()
+            combined_text = question_text + " " + category_text
+            
+            # 判断难度
+            if any(keyword in combined_text for keyword in easy_keywords):
+                categorized["简单"].append(q)
+            elif any(keyword in combined_text for keyword in hard_keywords):
+                categorized["困难"].append(q)
+            else:
+                categorized["中等"].append(q)
+        
+        return categorized
+    
+    def set_track(self, track):
+        """设置当前面试赛道"""
+        if track in self.tracks:
+            self.current_track = track
+            return True
+        return False
+    
+    def get_reference_questions(self, difficulty="中等", num_questions=3):
+        """获取参考问题用于AI生成"""
+        if not self.current_track or self.current_track not in self.question_banks:
+            return []
+        
+        track_questions = self.question_banks[self.current_track]
+        difficulty_questions = track_questions.get(difficulty, [])
+        
+        if not difficulty_questions:
+            # 如果当前难度没有题目，从其他难度选择
+            all_questions = []
+            for diff_level in track_questions.values():
+                all_questions.extend(diff_level)
+            if all_questions:
+                return random.sample(all_questions, min(num_questions, len(all_questions)))
+            return []
+        
+        return random.sample(difficulty_questions, min(num_questions, len(difficulty_questions)))
+    
+    def get_track_summary(self):
+        """获取当前赛道题库摘要"""
+        if not self.current_track:
+            return "未选择赛道"
+        
+        track_data = self.question_banks.get(self.current_track, {})
+        summary = f"{self.current_track}赛道题库:\n"
+        for difficulty, questions in track_data.items():
+            summary += f"- {difficulty}: {len(questions)}题\n"
+        
+        return summary
 
 
 # 评分系统和动态难度调整模块
@@ -555,7 +1174,13 @@ class InteractiveTextApp:
         self.dynamic_prompt_adjuster = None  # 动态提示调整器
         self.conversation_context = []  # 对话上下文
         self.score_manager = ScoreAndDifficultyManager()  # 评分和难度管理器
-        self.last_question = ""  # 保存最后一个问题用于评分        
+        self.question_bank_manager = QuestionBankManager()  # 题库管理器
+        self.stage_manager = ThreeStageInterviewManager()  # 三阶段面试管理器
+        self.jd_analyzer = JDAnalyzer()  # JD分析器
+        self.review_manager = InterviewReviewManager()  # 复盘管理器
+        self.last_question = ""  # 保存最后一个问题用于评分
+        self.selected_track = None  # 选择的面试赛道
+        self.jd_data = None  # JD数据        
         # 创建主框架
         main_frame = tk.Frame(root, bg="#f0f0f0")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -593,6 +1218,34 @@ class InteractiveTextApp:
         )
         self.upload_btn.pack(side=tk.LEFT, padx=5)
         
+        # 添加JD上传按钮
+        self.upload_jd_btn = tk.Button(
+            button_frame,
+            text="上传JD",
+            command=self.upload_jd,
+            font=self.small_font,
+            bg="#e67e22",
+            fg="white",
+            padx=10,
+            pady=5,
+            relief=tk.FLAT
+        )
+        self.upload_jd_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 添加赛道选择按钮
+        self.track_select_btn = tk.Button(
+            button_frame,
+            text="选择赛道",
+            command=self.select_track,
+            font=self.small_font,
+            bg="#9b59b6",
+            fg="white",
+            padx=10,
+            pady=5,
+            relief=tk.FLAT
+        )
+        self.track_select_btn.pack(side=tk.LEFT, padx=5)
+        
         # 添加面试开始按钮
         self.start_interview_btn = tk.Button(
             button_frame,
@@ -603,7 +1256,8 @@ class InteractiveTextApp:
             fg="white",
             padx=10,
             pady=5,
-            relief=tk.FLAT
+            relief=tk.FLAT,
+            state=tk.DISABLED  # 初始状态禁用
         )
         self.start_interview_btn.pack(side=tk.LEFT, padx=5)
         
@@ -621,6 +1275,36 @@ class InteractiveTextApp:
             state=tk.DISABLED
         )
         self.end_interview_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 添加面试复盘按钮
+        self.review_btn = tk.Button(
+            button_frame,
+            text="面试复盘",
+            command=self.show_interview_review,
+            font=self.small_font,
+            bg="#8e44ad",
+            fg="white",
+            padx=10,
+            pady=5,
+            relief=tk.FLAT,
+            state=tk.DISABLED
+        )
+        self.review_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 添加导出PDF按钮
+        self.export_pdf_btn = tk.Button(
+            button_frame,
+            text="导出PDF",
+            command=self.export_interview_pdf,
+            font=self.small_font,
+            bg="#16a085",
+            fg="white",
+            padx=10,
+            pady=5,
+            relief=tk.FLAT,
+            state=tk.DISABLED
+        )
+        self.export_pdf_btn.pack(side=tk.LEFT, padx=5)
         
         # 添加候选人信息面板
         info_frame = tk.LabelFrame(
@@ -643,6 +1327,49 @@ class InteractiveTextApp:
             wraplength=900
         )
         self.info_label.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 添加赛道选择状态面板
+        track_frame = tk.LabelFrame(
+            main_frame,
+            text="面试赛道",
+            font=self.small_font,
+            bg="#f0f0f0",
+            bd=2,
+            relief=tk.GROOVE
+        )
+        track_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.track_info_label = tk.Label(
+            track_frame,
+            text="请选择面试赛道",
+            font=("Helvetica", 12, "bold"),
+            bg="#f0f0f0",
+            fg="#9b59b6",
+            justify=tk.LEFT,
+            wraplength=900
+        )
+        self.track_info_label.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 添加面试阶段状态面板
+        stage_frame = tk.LabelFrame(
+            main_frame,
+            text="面试阶段",
+            font=self.small_font,
+            bg="#f0f0f0",
+            bd=2,
+            relief=tk.GROOVE
+        )
+        stage_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.stage_info_label = tk.Label(
+            stage_frame,
+            text="当前阶段: 等待开始",
+            font=("Helvetica", 12, "bold"),
+            bg="#f0f0f0",
+            fg="#e67e22",
+            justify=tk.LEFT
+        )
+        self.stage_info_label.pack(fill=tk.X, padx=10, pady=5)
         
         # 添加评分和难度状态面板
         score_frame = tk.LabelFrame(
@@ -721,7 +1448,7 @@ class InteractiveTextApp:
         self.text_area.pack(fill=tk.BOTH, expand=True)
         
         # 添加初始提示
-        self.display_text("欢迎使用AI面试智能官！\n请先上传简历，然后点击'开始面试'按钮开始面试。")
+        self.display_text("欢迎使用AI面试智能官！\n请按以下步骤操作：\n1. 上传简历\n2. 选择面试赛道\n3. 开始面试")
 
         # 创建录音控制区域
         control_frame = tk.Frame(main_frame, bg="#f0f0f0")
@@ -803,6 +1530,134 @@ class InteractiveTextApp:
         self.first_question_asked = False  # 标记是否已问过第一个问题
         self.key_topics = []  # 存储关键话题用于动态提示调整
 
+    def select_track(self):
+        """显示赛道选择对话框"""
+        track_window = tk.Toplevel(self.root)
+        track_window.title("选择面试赛道")
+        track_window.geometry("400x300")
+        track_window.configure(bg="#f0f0f0")
+        track_window.transient(self.root)
+        track_window.grab_set()
+        
+        # 标题
+        title_label = tk.Label(
+            track_window,
+            text="请选择面试赛道",
+            font=("Helvetica", 16, "bold"),
+            bg="#f0f0f0",
+            fg="#2c3e50"
+        )
+        title_label.pack(pady=20)
+        
+        # 赛道按钮
+        tracks = ["后端", "前端", "算法", "测试", "产品", "运营"]
+        colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c"]
+        
+        for i, track in enumerate(tracks):
+            btn = tk.Button(
+                track_window,
+                text=f"🎯 {track}",
+                command=lambda t=track: self.confirm_track_selection(t, track_window),
+                font=("Helvetica", 12, "bold"),
+                bg=colors[i % len(colors)],
+                fg="white",
+                padx=20,
+                pady=10,
+                relief=tk.FLAT,
+                width=15
+            )
+            btn.pack(pady=5)
+    
+    def confirm_track_selection(self, track, window):
+        """确认赛道选择"""
+        self.selected_track = track
+        self.question_bank_manager.set_track(track)
+        
+        # 更新界面显示
+        track_summary = self.question_bank_manager.get_track_summary()
+        self.track_info_label.config(
+            text=f"已选择: {track} 赛道\n{track_summary}",
+            fg="#2ecc71"
+        )
+        
+        # 启用开始面试按钮（如果已上传简历）
+        if self.resume_data and self.selected_track:
+            self.start_interview_btn.config(state=tk.NORMAL)
+        
+        self.display_text(f"已选择 {track} 赛道！题库已加载完成。")
+        
+        window.destroy()
+    
+    def upload_jd(self):
+        """上传并解析JD"""
+        # 创建JD输入对话框
+        jd_window = tk.Toplevel(self.root)
+        jd_window.title("输入职位描述(JD)")
+        jd_window.geometry("600x400")
+        jd_window.configure(bg="#f0f0f0")
+        jd_window.transient(self.root)
+        jd_window.grab_set()
+        
+        # 标题
+        title_label = tk.Label(
+            jd_window,
+            text="请输入职位描述(JD)信息",
+            font=("Helvetica", 14, "bold"),
+            bg="#f0f0f0",
+            fg="#2c3e50"
+        )
+        title_label.pack(pady=10)
+        
+        # 文本输入框
+        jd_text = scrolledtext.ScrolledText(
+            jd_window,
+            wrap=tk.WORD,
+            width=70,
+            height=20,
+            font=("Helvetica", 10)
+        )
+        jd_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # 按钮框架
+        btn_frame = tk.Frame(jd_window, bg="#f0f0f0")
+        btn_frame.pack(pady=10)
+        
+        def confirm_jd():
+            jd_content = jd_text.get("1.0", tk.END).strip()
+            if jd_content:
+                self.jd_data = self.jd_analyzer.parse_jd(jd_content)
+                jd_summary = self.jd_analyzer.get_jd_summary()
+                self.display_text(f"JD解析完成！\n{jd_summary}")
+                jd_window.destroy()
+            else:
+                tk.messagebox.showerror("错误", "请输入JD内容")
+        
+        # 确认按钮
+        confirm_btn = tk.Button(
+            btn_frame,
+            text="确认",
+            command=confirm_jd,
+            font=("Helvetica", 12),
+            bg="#2ecc71",
+            fg="white",
+            padx=20,
+            pady=5
+        )
+        confirm_btn.pack(side=tk.LEFT, padx=10)
+        
+        # 取消按钮
+        cancel_btn = tk.Button(
+            btn_frame,
+            text="取消",
+            command=jd_window.destroy,
+            font=("Helvetica", 12),
+            bg="#e74c3c",
+            fg="white",
+            padx=20,
+            pady=5
+        )
+        cancel_btn.pack(side=tk.LEFT, padx=10)
+
     def upload_resume(self):
         """上传并解析简历"""
         file_path = filedialog.askopenfilename(
@@ -823,8 +1678,11 @@ class InteractiveTextApp:
                 info_text += f"技能: {len(self.resume_data['skills'])}项"
                 
                 self.info_label.config(text=info_text)
-                self.display_text("简历解析完成！请点击'开始面试'按钮开始面试。")
-                self.start_interview_btn.config(state=tk.NORMAL)
+                self.display_text("简历解析完成！请选择面试赛道后开始面试。")
+                
+                # 只有在选择了赛道后才能开始面试
+                if self.selected_track:
+                    self.start_interview_btn.config(state=tk.NORMAL)
                 
                 # 创建动态提示调整器
                 self.dynamic_prompt_adjuster = DynamicPromptAdjuster(self.resume_data)
@@ -866,18 +1724,37 @@ class InteractiveTextApp:
             self.display_text("请先上传简历！")
             return
         
+        if not self.selected_track:
+            self.display_text("请先选择面试赛道！")
+            return
+        
         self.interview_active = True
         self.question_count = 0  # 重置问题计数器
         self.first_question_asked = False  # 重置第一问题标记
         
         # 重置评分和难度管理器
         self.score_manager = ScoreAndDifficultyManager()
+        
+        # 重置三阶段管理器
+        self.stage_manager = ThreeStageInterviewManager()
+        
+        # 重置复盘管理器
+        self.review_manager = InterviewReviewManager()
+        
+        # 更新状态显示
         self.update_status_display()
+        current_stage = self.stage_manager.get_current_stage()
+        self.stage_info_label.config(text=f"当前阶段: {current_stage} (第1题)")
         
         self.display_text("面试已开始！请准备回答面试官的问题。")
+        self.display_text(f"📍 当前阶段: {current_stage}")
         self.display_text(f"初始难度: {self.score_manager.current_difficulty}")
         self.end_interview_btn.config(state=tk.NORMAL)
         self.start_interview_btn.config(state=tk.DISABLED)
+        
+        # 禁用复盘和导出按钮
+        self.review_btn.config(state=tk.DISABLED)
+        self.export_pdf_btn.config(state=tk.DISABLED)
         
         # 重置对话历史
         self.conversation_history = []
@@ -907,6 +1784,144 @@ class InteractiveTextApp:
         
         # 发送评估请求（包含评分信息）
         self.input_queue.put("end_interview")
+        
+        # 启用复盘和导出按钮
+        self.review_btn.config(state=tk.NORMAL)
+        self.export_pdf_btn.config(state=tk.NORMAL)
+    
+    def show_interview_review(self):
+        """显示面试复盘"""
+        if not self.review_manager.interview_records:
+            tk.messagebox.showinfo("提示", "暂无面试记录")
+            return
+        
+        # 生成综合评估
+        assessment = self.review_manager.generate_overall_assessment(
+            self.stage_manager, self.score_manager
+        )
+        
+        # 创建复盘窗口
+        review_window = tk.Toplevel(self.root)
+        review_window.title("面试复盘分析")
+        review_window.geometry("800x600")
+        review_window.configure(bg="#f0f0f0")
+        
+        # 创建滚动文本框
+        review_text = scrolledtext.ScrolledText(
+            review_window,
+            wrap=tk.WORD,
+            width=90,
+            height=35,
+            font=("Helvetica", 10),
+            bg="#ffffff",
+            fg="#333333"
+        )
+        review_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # 显示复盘内容
+        review_content = f"""
+🎯 面试复盘报告
+{'='*60}
+
+📅 面试日期: {assessment['interview_date']}
+📊 总题数: {assessment['total_questions']}题
+🎯 综合得分: {assessment['overall_score']:.2f}/1.00
+
+{'='*60}
+📈 各阶段表现分析
+{'='*60}
+"""
+        
+        for stage, performance in assessment['stage_performance'].items():
+            review_content += f"""
+🔸 {stage}:
+   - 题目数量: {performance['questions']}题
+   - 平均得分: {performance['avg_score']:.2f}/1.00
+   - 表现评价: {'优秀' if performance['avg_score'] >= 0.7 else '良好' if performance['avg_score'] >= 0.5 else '需改进'}
+"""
+        
+        review_content += f"""
+{'='*60}
+✅ 优势表现
+{'='*60}
+"""
+        for strength in assessment['strengths']:
+            review_content += f"• {strength}\n"
+        
+        if not assessment['strengths']:
+            review_content += "建议在各个方面继续努力\n"
+        
+        review_content += f"""
+{'='*60}
+⚠️ 待改进方面
+{'='*60}
+"""
+        for weakness in assessment['weaknesses']:
+            review_content += f"• {weakness}\n"
+        
+        if not assessment['weaknesses']:
+            review_content += "整体表现良好\n"
+        
+        review_content += f"""
+{'='*60}
+💡 改进建议
+{'='*60}
+"""
+        for suggestion in assessment['improvement_suggestions']:
+            review_content += f"• {suggestion}\n"
+        
+        review_content += f"""
+{'='*60}
+📝 详细问答记录
+{'='*60}
+"""
+        
+        for i, record in enumerate(self.review_manager.interview_records):
+            review_content += f"""
+第{i+1}题 [{record['stage']}] - {record['timestamp']}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❓ 问题: {record['question']}
+
+💬 回答: {record['answer']}
+
+📊 得分: {record['score']:.2f}/1.00
+
+💭 反馈: {record['feedback']}
+
+"""
+        
+        review_text.insert(tk.END, review_content)
+        review_text.config(state='disabled')
+    
+    def export_interview_pdf(self):
+        """导出面试记录为PDF"""
+        if not self.review_manager.interview_records:
+            tk.messagebox.showinfo("提示", "暂无面试记录")
+            return
+        
+        # 选择保存位置
+        filename = filedialog.asksaveasfilename(
+            title="保存面试报告",
+            defaultextension=".pdf",
+            filetypes=[("PDF文件", "*.pdf"), ("所有文件", "*.*")]
+        )
+        
+        if filename:
+            # 生成综合评估
+            self.review_manager.generate_overall_assessment(
+                self.stage_manager, self.score_manager
+            )
+            
+            # 导出PDF
+            candidate_name = self.resume_data.get('name', '候选人') if self.resume_data else '候选人'
+            track_name = self.selected_track or '未知赛道'
+            
+            success = self.review_manager.export_to_pdf(filename, candidate_name, track_name)
+            
+            if success:
+                tk.messagebox.showinfo("成功", f"面试报告已导出至:\n{filename}")
+            else:
+                tk.messagebox.showerror("失败", "PDF导出失败，请检查权限和路径")
 
     def start_recording(self, event):
         """开始录音"""
@@ -945,6 +1960,9 @@ class InteractiveTextApp:
         
         if user_input:
             self.message_queue.put(f"候选人: {user_input}")
+            
+            # 保存最后回答用于评分
+            self.last_answer = user_input
             
             # 将候选人的回答添加到对话历史
             self.conversation_history.append({"role": "user", "content": user_input})
@@ -995,6 +2013,20 @@ class InteractiveTextApp:
     
     def _update_after_scoring(self, score, new_difficulty):
         """评分完成后更新UI和状态"""
+        # 生成详细反馈
+        if hasattr(self, 'last_question') and hasattr(self, 'last_answer'):
+            feedback = self.review_manager.generate_detailed_feedback(
+                self.last_answer, self.last_question, score
+            )
+        else:
+            feedback = f"得分: {score:.2f}/1.0"
+        
+        # 添加到复盘记录
+        current_stage = self.stage_manager.get_current_stage()
+        self.review_manager.add_qa_record(
+            self.last_question, self.last_answer, score, feedback, current_stage
+        )
+        
         # 显示评分结果
         score_text = f"本题评分: {score:.2f}"
         if score > 0.8:
@@ -1007,6 +2039,30 @@ class InteractiveTextApp:
             score_text += " (需改进)"
         
         self.display_text(score_text)
+        self.display_text(f"反馈: {feedback}")
+        
+        # 添加评分到当前阶段
+        self.stage_manager.add_score_to_stage(score)
+        
+        # 检查是否需要进入下一阶段
+        if self.stage_manager.should_advance_stage():
+            if self.stage_manager.advance_to_next_stage():
+                new_stage = self.stage_manager.get_current_stage()
+                self.display_text(f"📍 进入下一阶段: {new_stage}")
+                self.stage_info_label.config(
+                    text=f"当前阶段: {new_stage} (第{self.stage_manager.current_stage_question_count + 1}题)"
+                )
+            else:
+                self.display_text("📍 所有阶段已完成，可以结束面试")
+                self.stage_info_label.config(text="当前阶段: 面试完成")
+        else:
+            current_stage = self.stage_manager.get_current_stage()
+            self.stage_info_label.config(
+                text=f"当前阶段: {current_stage} (第{self.stage_manager.current_stage_question_count + 1}题)"
+            )
+        
+        # 动态调整后续阶段问题数量
+        self.stage_manager.adjust_stage_questions(self.score_manager.score_history)
         
         # 如果难度发生变化，显示难度调整信息
         if new_difficulty != self.score_manager.difficulty_history[-1]["previous_difficulty"]:
@@ -1058,15 +2114,42 @@ class InteractiveTextApp:
             return model_output
 
     def build_dynamic_prompt(self):
-        """根据论文结构构建动态提示 [I; H; K; E]，集成难度调整"""
+        """根据论文结构构建动态提示 [I; H; K; E]，集成三阶段面试和难度调整"""
+        # 获取当前阶段提示
+        stage_prompt = self.stage_manager.get_stage_prompt(self.jd_data, self.resume_data)
+        
         # 获取难度相关提示
         difficulty_prompt = self.score_manager.get_difficulty_prompt()
         
-        # I: 任务指令（集成难度调整）
+        # 获取题库参考问题
+        reference_questions = []
+        if self.selected_track:
+            ref_questions = self.question_bank_manager.get_reference_questions(
+                difficulty=self.score_manager.current_difficulty,
+                num_questions=3
+            )
+            reference_questions = [q["question"] for q in ref_questions]
+        
+        # I: 任务指令（集成三阶段面试、难度调整和题库）
         instruction = (
-            "你是一个专业的AI面试官，具备动态难度调整能力。基于候选人的简历信息、对话历史和当前难度要求，提出相关的问题来评估候选人的技能和经验。"
-            "面试问题应聚焦于候选人的工作经验、项目经历、技能掌握程度等专业领域。\n\n"
+            f"你是一个专业的{self.selected_track}面试官，具备三阶段面试和动态难度调整能力。"
+            f"当前正在进行第{self.stage_manager.current_stage + 1}阶段面试。\n\n"
+            f"{stage_prompt}\n\n"
             f"{difficulty_prompt}\n\n"
+        )
+        
+        # 添加JD相关信息
+        if self.jd_data and self.jd_data.get('keywords'):
+            instruction += f"### JD关键技术要求:\n{', '.join(self.jd_data['keywords'])}\n\n"
+        
+        # 添加题库参考
+        if reference_questions:
+            instruction += "### 参考题库示例:\n"
+            for i, q in enumerate(reference_questions, 1):
+                instruction += f"{i}. {q}\n"
+            instruction += "\n请参考以上题库内容和当前阶段要求，生成相应的问题。\n\n"
+        
+        instruction += (
             "你必须严格遵守以下规则：\n"
             "1. 在输出问题时，先进行思考（使用<think>标签包裹思考过程），然后输出问题（使用</think>标签结束思考）\n"
             "2. 在问题前添加'>'符号作为前缀\n"
@@ -1074,7 +2157,9 @@ class InteractiveTextApp:
             "4. 每次只提一个问题\n"
             "5. 问题应该简洁明了，不超过2句话\n"
             "6. 问题难度必须与当前设定的难度级别匹配\n"
-            "7. 面试结束时给出全面评估，包括评分总结\n"
+            f"7. 问题必须符合当前{self.stage_manager.get_current_stage()}阶段要求\n"
+            f"8. 问题必须符合{self.selected_track}赛道的专业要求\n"
+            "9. 面试结束时给出全面评估，包括评分总结\n"
         )
         
         # H: 历史细节
