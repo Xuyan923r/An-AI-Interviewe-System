@@ -87,24 +87,36 @@
 - **高质量格式**：支持中文字体，标准A4布局
 - **一键导出**：便于HR和候选人后续参考
 
-## 📁 项目结构
+## 📁 项目结构（已模块化）
 
 ```
 AI-interviewers/
-├── main.py                    # 主程序文件
-├── requirements.txt            # 依赖包列表
-├── README.md                  # 项目说明文档
-├── data/                      # 数据文件夹
-│   ├── data.xlsx             # 原始面试题目数据
-│   ├── divide.py             # 数据分割脚本
-│   └── data_divided/         # 分赛道题库
-│       ├── 后端.csv          # 后端面试题(631题)
-│       ├── 前端.csv          # 前端面试题(400题)
-│       ├── 算法.csv          # 算法面试题(267题)
-│       ├── 测试.csv          # 测试面试题(224题)
-│       ├── 产品.csv          # 产品面试题(140题)
-│       └── 运营.csv          # 运营面试题(116题)
-└── vosk-model-cn-0.15/       # 中文语音识别模型
+├── main.py                       # 精简入口（启动应用）
+├── requirements.txt              # 依赖包列表
+├── README.md                     # 项目说明文档
+├── ai_interview/                 # 核心功能模块包
+│   ├── __init__.py
+│   ├── app.py                    # 入口封装（加载模型、启动UI）
+│   ├── ui.py                     # Tkinter图形界面
+│   ├── voice.py                  # 录音与语音识别（Vosk）
+│   ├── resume.py                 # 简历解析（PDF/DOCX）
+│   ├── jd.py                     # JD职位描述解析
+│   ├── stages.py                 # 三阶段面试管理
+│   ├── questions.py              # 题库加载与难度分类
+│   ├── scoring.py                # AI评分与难度调整
+│   ├── prompting.py              # 动态提示与上下文抽取
+│   └── knowledge.py              # 能力金字塔与岗位知识图谱（新增）
+├── data/
+│   ├── data.xlsx
+│   ├── divide.py
+│   └── data_divided/
+│       ├── 后端.csv
+│       ├── 前端.csv
+│       ├── 算法.csv
+│       ├── 测试.csv
+│       ├── 产品.csv
+│       └── 运营.csv
+└── vosk-model-cn-0.15/          # 中文语音识别模型
 ```
 
 ## 🛠 安装配置
@@ -138,7 +150,7 @@ ollama pull deepseek-r1-with-tool-calls:latest
 
 ### 4. 验证安装
 ```bash
-python -m py_compile main.py
+python -m py_compile ai_interview/*.py
 ```
 
 ## 🚀 使用指南
@@ -146,6 +158,14 @@ python -m py_compile main.py
 ### 启动系统
 ```bash
 python main.py
+```
+
+或以函数方式启动（便于集成到其它脚本）：
+
+```python
+from ai_interview.app import run_app
+
+run_app()
 ```
 
 ### 完整面试流程
@@ -427,16 +447,51 @@ graph LR
 ### 核心模块
 ```python
 # 主要类结构
-├── JDAnalyzer                    # JD解析器
-├── ThreeStageInterviewManager    # 三阶段面试管理器
-├── InterviewReviewManager        # 复盘管理器
-├── QuestionBankManager           # 题库管理
-├── ScoreAndDifficultyManager     # 评分和难度调整
-├── DynamicPromptAdjuster         # 动态提示调整
-├── VoiceRecorder                 # 语音识别
-├── ResumeParser                  # 简历解析
-└── InteractiveTextApp           # 图形界面
+├── JDAnalyzer                    # ai_interview/jd.py
+├── ThreeStageInterviewManager    # ai_interview/stages.py
+├── InterviewReviewManager        # ai_interview/review.py
+├── QuestionBankManager           # ai_interview/questions.py
+├── ScoreAndDifficultyManager     # ai_interview/scoring.py
+├── DynamicPromptAdjuster         # ai_interview/prompting.py
+├── VoiceRecorder                 # ai_interview/voice.py
+├── ResumeParser                  # ai_interview/resume.py
+├── AbilityPyramid                # ai_interview/knowledge.py
+├── JobKnowledgeGraphBuilder      # ai_interview/knowledge.py
+└── InteractiveTextApp           # ai_interview/ui.py
 ```
+
+## 🧩 与写作框架对应说明
+
+为契合“写作框架.docx”的论文式结构，系统实现与文档结构的映射如下：
+
+- **1 Introduction**: README 开头对系统背景、目标与重要性作了概括。
+- **2 Related Work**: 指出现有系统的模板化不足与缺乏个性化/动态调节（见“核心特性”“智能算法”）。
+- **3 Pre-research and Analysis**: 预研要点在“系统优势/使用场景”中体现；真实调研数据位留空，后续补充。
+- **4 TQL Design & 5 System Implementation**:
+  - 多阶段面试设计：`ai_interview/stages.py` 管理三阶段与题数；`ai_interview/ui.py` 展示阶段进度。
+  - 动态调节：`ai_interview/scoring.py` 人性化评分与难度调整，`ui.py` 后台静默评分与动态推进。
+  - 动态提示词系统：`ai_interview/prompting.py` 的实体权重衰减-激活、行为分类、Triplet Filter 与 Demo Selector；`ai_interview/knowledge.py` 的能力金字塔与岗位知识图谱摘要参与提示合成；`ui.py` 将其注入到系统提示中。
+- **6 Field Experiment / 7 Results**: 实验与量化结果位留空（需你提供样本量与对比基线）。报告导出已就绪，可支撑复盘与统计。
+- **8 Discussion / 9 Conclusion**: 可基于面试复盘与导出的 PDF 报告撰写（位留空）。
+
+### 可补充的数据位（请按需填写）
+- 问卷与访谈样本统计（N、画像、岗位分布）
+- 题库来源统计的原始引用链接
+- 能力金字塔的岗位-能力映射清单（建议 data/knowledge/pyramids/*.yml）
+- 岗位知识图谱的三元组规则与外部知识库（建议 data/knowledge/graph/*.jsonl）
+
+### 研发实现要点（本次新增/增强）
+- 新增 `ai_interview/knowledge.py`：
+  - `AbilityPyramid.from_jd(jd_data)`：从 JD 粗略生成基础/中级/高级能力要点（占位实现）。
+  - `JobKnowledgeGraphBuilder`：基于简历与 JD 构建轻量三元组摘要（占位实现）。
+- 增强 `ai_interview/prompting.py`：
+  - 实体权重“指数衰减-激活”机制，保障近期高频实体优先。
+  - Triplet Filter 按“频次+权重”综合排序，提升相关性。
+- 整合 `ai_interview/ui.py`：
+  - 在 JD/简历上传后生成“能力金字塔”和“岗位知识图谱”摘要并用于动态提示。
+  - 动态提示中加入“建议关注层级”（基础/中级/高级）。
+
+> 注：上述“占位实现”已留出数据接口，便于后续替换为外部知识库或更强的规则/检索/RAG 实现。
 
 ### 技术栈
 - **AI框架**: Ollama + DeepSeek模型
