@@ -308,16 +308,36 @@ class InteractiveTextApp:
     def upload_jd(self):
         jd_window = tk.Toplevel(self.root)
         jd_window.title("输入职位描述(JD)")
-        jd_window.geometry("600x400")
+        jd_window.geometry("600x420")
+        jd_window.minsize(520, 360)
         jd_window.configure(bg="#f0f0f0")
         jd_window.transient(self.root)
         jd_window.grab_set()
-        title_label = tk.Label(jd_window, text="请输入职位描述(JD)信息", font=("Helvetica", 14, "bold"), bg="#f0f0f0", fg="#2c3e50")
-        title_label.pack(pady=10)
-        jd_text = scrolledtext.ScrolledText(jd_window, wrap=tk.WORD, width=70, height=20, font=("Helvetica", 10))
-        jd_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # 使用网格布局，确保在不同平台窗口缩放时按钮不被遮挡
+        jd_window.rowconfigure(1, weight=1)
+        jd_window.columnconfigure(0, weight=1)
+
+        title_label = tk.Label(
+            jd_window,
+            text="请输入职位描述(JD)信息",
+            font=(self.default_family, 14, "bold"),
+            bg="#f0f0f0",
+            fg="#2c3e50"
+        )
+        title_label.grid(row=0, column=0, padx=16, pady=(12, 6), sticky="w")
+
+        jd_text = scrolledtext.ScrolledText(
+            jd_window,
+            wrap=tk.WORD,
+            width=70,
+            height=12,
+            font=(self.default_family, 12)
+        )
+        jd_text.grid(row=1, column=0, padx=16, pady=8, sticky="nsew")
+
         btn_frame = tk.Frame(jd_window, bg="#f0f0f0")
-        btn_frame.pack(pady=10)
+        btn_frame.grid(row=2, column=0, padx=16, pady=(6, 12), sticky="e")
 
         def confirm_jd():
             jd_content = jd_text.get("1.0", tk.END).strip()
@@ -336,10 +356,11 @@ class InteractiveTextApp:
             else:
                 tk.messagebox.showerror("错误", "请输入JD内容")
 
-        confirm_btn = tk.Button(btn_frame, text="确认", command=confirm_jd, font=("Helvetica", 12), bg="#2ecc71", fg="white", padx=20, pady=5)
-        confirm_btn.pack(side=tk.LEFT, padx=10)
-        cancel_btn = tk.Button(btn_frame, text="取消", command=jd_window.destroy, font=("Helvetica", 12), bg="#e74c3c", fg="white", padx=20, pady=5)
-        cancel_btn.pack(side=tk.LEFT, padx=10)
+        # 使用 ttk.Button 以获得更好的跨平台一致性
+        confirm_btn = ttk.Button(btn_frame, text="确认", command=confirm_jd)
+        confirm_btn.pack(side=tk.RIGHT, padx=(8, 0))
+        cancel_btn = ttk.Button(btn_frame, text="取消", command=jd_window.destroy)
+        cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
     def upload_resume(self):
         file_path = filedialog.askopenfilename(title="选择简历文件", filetypes=[("PDF文件", "*.pdf"), ("Word文件", "*.docx"), ("所有文件", "*.*")])
