@@ -10,10 +10,10 @@ from .ui import InteractiveTextApp
 
 
 class Solution:
-    def __init__(self, model_path="vosk-model-cn-0.15"):
-        model = Model(model_path)
+    def __init__(self, model_path="whisper-large-v2"):
+        # model = Model(model_path)
         SetLogLevel(-1)
-        self.recorder = VoiceRecorder(model)
+        self.recorder = VoiceRecorder(model_path, device="cpu")
 
     def use_pyttsx3(self, word):
         threading.Thread(target=self._speak, args=(word,), daemon=True).start()
